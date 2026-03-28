@@ -1,0 +1,394 @@
+{% extends "base.html" %}{% set page = 'agents' %}
+{% block title %}Agents — MCP Gate{% endblock %}
+{% block content %}
+<style>
+.toggle-switch{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:20px;transition:.2s}
+.toggle-slider:before{position:absolute;content:"";height:14px;width:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+input:checked+.toggle-slider{background:var(--accent)}
+input:checked+.toggle-slider:before{transform:translateX(16px)}
+.agent-disabled{opacity:0.4}
+.tag-deny{background:#7f1d1d!important;color:#fff!important}
+.host-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid var(--border);transition:.15s;font-size:13px}
+.host-chip:hover{border-color:var(--accent)}
+.host-chip.selected{background:var(--accent);border-color:var(--accent);color:#fff}
+.host-chip .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.set-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;cursor:pointer;border:2px solid transparent;transition:.15s;font-size:12px;color:#fff}
+.set-chip.selected{border-color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.3)}
+.set-chip:not(.selected){opacity:0.5}
+.set-chip:hover{opacity:1}
+</style>
+<div x-data="agentsApp()" x-init="init()">
+  <div class="flex-between mb-4">
+    <h1>🤖 Agents</h1>
+    <div class="flex">
+      <div class="action-bar">
+        <button class="ab ab-import" @click="showImport=true">📥 Import</button>
+        <button class="ab ab-export" @click="exportAll()">📤 Export</button>
+        <span class="sep"></span>
+        <button class="ab ab-add" @click="reset();showAdd=true;editing=false">+ Add Agent</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent cards -->
+  <div class="grid-3 mb-4">
+    <template x-for="a in agents" :key="a.id">
+      <div class="card" :class="a.enabled===false?'agent-disabled':''" style="cursor:pointer;position:relative" @click="openDetail(a)">
+        <div style="position:absolute;top:12px;right:12px" @click.stop>
+          <label class="toggle-switch">
+            <input type="checkbox" :checked="a.enabled!==false" @change="toggleAgent(a.id)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="flex" style="gap:12px;margin-bottom:12px;padding-right:48px">
+          <span style="font-size:32px" x-text="a.icon||getTypeIcon(a.agent_type)"></span>
+          <div>
+            <div style="font-weight:600;font-size:15px" x-text="a.name||a.id"></div>
+            <div class="text-muted" style="font-size:12px" x-text="getTypeName(a.agent_type)"></div>
+          </div>
+        </div>
+        <div class="flex" style="gap:4px;flex-wrap:wrap;margin-bottom:8px">
+          <span :class="a.api_key_hash?'badge badge-ok':'badge badge-warn'" style="font-size:10px" x-text="a.api_key_hash?'🔑 Key':'No key'"></span>
+          <span class="badge" style="font-size:10px" x-text="(a.rate_limit||60)+'/min'"></span>
+          <span x-show="(a.allowed_hosts||[]).length" class="badge badge-cyan" style="font-size:10px" x-text="(a.allowed_hosts||[]).length+' hosts'"></span>
+          <span x-show="!(a.allowed_hosts||[]).length" class="badge" style="font-size:10px">All hosts</span>
+        </div>
+        <div class="flex" style="gap:4px;flex-wrap:wrap">
+          <template x-for="sid in (a.command_sets||[])" :key="sid">
+            <a :href="'/command-sets#'+sid" class="tag" style="font-size:10px;padding:1px 5px;text-decoration:none;transition:.15s"
+              :class="getSetType(sid)==='deny'?'tag-deny':''"
+              :style="(getSetType(sid)!=='deny'?'background:'+getSetColor(sid)+';color:#fff;':'')"
+              @click.stop x-text="(getSetType(sid)==='deny'?'✕ ':'✓ ')+sid"></a>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+  <div x-show="agents.length===0" class="card text-muted" style="text-align:center;padding:32px">
+    No agents configured. Add your first AI agent.
+  </div>
+
+  <!-- Add/Edit Modal -->
+  <template x-if="showAdd">
+    <div class="overlay" @mousedown.self="showAdd=false">
+      <div class="modal" @keydown.stop style="position:relative;max-width:620px">
+        <button class="modal-close" @click="showAdd=false">&times;</button>
+        <h2 x-text="editing?'Edit Agent':'Add Agent'"></h2>
+
+        <!-- Row 1: ID + Name -->
+        <div class="grid-2">
+          <div class="form-row"><label>ID *</label><input x-model="f.id" :disabled="editing" placeholder="claude-main"></div>
+          <div class="form-row"><label>Name *</label><input x-model="f.name" placeholder="Claude Production"></div>
+        </div>
+
+        <!-- Row 2: Type + Rate Limit -->
+        <div class="grid-2">
+          <div class="form-row"><label>Type</label>
+            <select x-model="f.agent_type" @change="if(!editing&&!f.icon){f.icon=getTypeIcon(f.agent_type)}">
+              <template x-for="(info,key) in types" :key="key">
+                <option :value="key" x-text="info.icon+' '+info.name"></option>
+              </template>
+            </select>
+          </div>
+          <div class="form-row"><label>Rate Limit / min</label><input type="number" x-model.number="f.rate_limit" min="1" max="1000"></div>
+        </div>
+
+        <!-- Row 3: Icon + Enabled -->
+        <div class="grid-2">
+          <div class="form-row"><label>Icon</label>
+            <div class="flex" style="gap:8px;align-items:center">
+              <span style="font-size:24px;min-width:32px;text-align:center" x-text="f.icon||getTypeIcon(f.agent_type)"></span>
+              <input x-model="f.icon" :placeholder="getTypeIcon(f.agent_type)" style="flex:1">
+            </div>
+          </div>
+          <div class="form-row"><label>Enabled</label>
+            <label class="toggle-switch" style="margin-top:6px">
+              <input type="checkbox" x-model="f.enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div class="form-row"><label>Description</label><textarea x-model="f.description" rows="2" placeholder="Optional description"></textarea></div>
+
+        <!-- Allowed Hosts -->
+        <div class="form-row">
+          <label>Allowed Hosts <span class="text-muted" style="font-weight:normal;font-size:11px" x-text="(f.allowed_hosts||[]).length?'('+f.allowed_hosts.length+' selected)':'(all hosts)'"></span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+            <template x-for="h in allHosts" :key="h.id">
+              <div class="host-chip" :class="(f.allowed_hosts||[]).includes(h.id)?'selected':''" @click="toggleHost(h.id)">
+                <span class="dot" :style="'background:'+(h.enabled!==false?'#22c55e':'#ef4444')"></span>
+                <span x-text="h.name||h.id"></span>
+              </div>
+            </template>
+            <span x-show="!allHosts.length" class="text-muted" style="font-size:12px;padding:4px">No hosts configured</span>
+          </div>
+        </div>
+
+        <!-- Command Sets -->
+        <div class="form-row">
+          <label>Command Sets</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+            <template x-for="s in sets" :key="s.id">
+              <div class="set-chip" :class="(f.command_sets||[]).includes(s.id)?'selected':''"
+                :style="s.type==='deny'?'background:#7f1d1d':'background:'+(s.color||'#6366f1')"
+                @click="toggleSet(s.id)">
+                <span x-text="(s.type==='deny'?'✕ ':'✓ ')+(s.name||s.id)"></span>
+                <span style="opacity:0.7;font-size:10px" x-text="(s.commands||[]).length+' cmd'"></span>
+              </div>
+            </template>
+            <span x-show="!sets.length" class="text-muted" style="font-size:12px;padding:4px">No command sets configured</span>
+          </div>
+        </div>
+
+        <!-- API Key (only on create) -->
+        <div class="form-row" x-show="!editing">
+          <label>API Key</label>
+          <div class="flex"><input x-model="f.api_key" placeholder="Auto-generated if empty" style="flex:1"><button class="btn btn-sm" @click="f.api_key=generateKey()">Generate</button></div>
+        </div>
+
+        <!-- Connect hint -->
+        <div class="form-row" style="margin-top:8px">
+          <div style="font-size:11px;color:var(--text2);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;white-space:pre-wrap" x-text="'💡 '+getConnectHint(f.agent_type)"></div>
+        </div>
+
+        <div class="flex mt-4">
+          <button class="btn btn-accent" @click="save()">Save</button>
+          <button class="btn" @click="showAdd=false">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Detail Modal -->
+  <template x-if="detail">
+    <div class="overlay" @mousedown.self="detail=null">
+      <div class="modal" @keydown.stop style="position:relative;max-width:700px">
+        <button class="modal-close" @click="detail=null">&times;</button>
+        <div class="flex" style="gap:16px;margin-bottom:16px;align-items:flex-start">
+          <span style="font-size:48px" x-text="detail.icon||getTypeIcon(detail.agent_type)"></span>
+          <div style="flex:1">
+            <h2 style="margin:0;font-size:20px" x-text="detail.name||detail.id"></h2>
+            <div class="text-muted" x-text="getTypeName(detail.agent_type)"></div>
+            <div class="flex mt-2">
+              <span class="badge" :class="detail.enabled!==false?'badge-ok':'badge-err'" x-text="detail.enabled!==false?'Enabled':'Disabled'"></span>
+              <span :class="detail.api_key_hash?'badge badge-ok':'badge badge-warn'" x-text="detail.api_key_hash?'Key configured':'No key'"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-3 mb-4">
+          <div class="stat-card"><div class="stat-label">Rate Limit</div><div style="font-size:14px;margin-top:4px" x-text="(detail.rate_limit||60)+' / min'"></div></div>
+          <div class="stat-card"><div class="stat-label">Created</div><div style="font-size:12px;margin-top:4px" x-text="ts(detail.created_at)"></div></div>
+          <div class="stat-card"><div class="stat-label">Updated</div><div style="font-size:12px;margin-top:4px" x-text="ts(detail.updated_at)"></div></div>
+        </div>
+        <template x-if="detail.description"><p class="text-muted mb-4" style="font-size:13px" x-text="detail.description"></p></template>
+
+        <!-- API Key -->
+        <div class="card mb-4" style="background:var(--bg3)">
+          <div class="flex-between" style="margin-bottom:8px">
+            <h2 style="margin:0;font-size:14px">🔑 API Key</h2>
+            <div class="flex" style="gap:4px">
+              <button class="btn btn-sm" @click="revealKey(detail.id)" x-text="revealedKey?'🙈 Hide':'👁 Show'"></button>
+              <button class="btn btn-sm btn-green" @click="genKey(detail.id)">Generate new</button>
+              <button class="btn btn-sm" x-show="revealedKey" @click="copyText(revealedKey);toast('Copied',2000,'ok')">📋</button>
+            </div>
+          </div>
+          <div x-show="revealedKey" style="font-family:monospace;font-size:12px;word-break:break-all;padding:6px;background:var(--bg);border-radius:4px;border:1px solid var(--border)" x-text="revealedKey"></div>
+          <div x-show="!revealedKey" class="text-muted" style="font-size:12px">Key is hidden. Click Show to reveal.</div>
+        </div>
+
+        <!-- Connection -->
+        <div class="card mb-4" style="background:var(--bg);border-color:var(--accent)">
+          <h2 style="margin-top:0;font-size:14px">🔗 Connection</h2>
+          <p class="text-muted" style="font-size:12px;white-space:pre-wrap" x-text="getConnectHint(detail.agent_type)"></p>
+        </div>
+
+        <!-- Allowed hosts -->
+        <h2 style="font-size:14px">Allowed Hosts</h2>
+        <div class="flex mt-2 mb-4" style="flex-wrap:wrap;gap:4px">
+          <template x-for="hid in (detail.allowed_hosts||[])" :key="hid">
+            <span class="badge badge-cyan" x-text="hid"></span>
+          </template>
+          <span x-show="!(detail.allowed_hosts||[]).length" class="text-muted" style="font-size:12px">All hosts (unrestricted)</span>
+        </div>
+
+        <!-- Command sets -->
+        <h2 style="font-size:14px">Command Sets</h2>
+        <div class="flex mt-2 mb-4" style="flex-wrap:wrap;gap:4px">
+          <template x-for="sid in (detail.command_sets||[])" :key="sid">
+            <a :href="'/command-sets#'+sid" class="tag" style="font-size:12px;text-decoration:none;transition:.15s"
+              :class="getSetType(sid)==='deny'?'tag-deny':''"
+              :style="getSetType(sid)!=='deny'?'background:'+getSetColor(sid)+';color:#fff':''"
+              @mouseenter="$el.style.filter='brightness(1.2)'" @mouseleave="$el.style.filter=''"
+              x-text="(getSetType(sid)==='deny'?'✕ ':'✓ ')+sid"></a>
+          </template>
+          <span x-show="!(detail.command_sets||[]).length" class="text-muted" style="font-size:12px">No sets</span>
+        </div>
+
+        <div class="flex mt-4" style="flex-wrap:wrap;gap:6px">
+          <button class="btn btn-accent" @click="edit(detail);detail=null">Edit</button>
+          <button class="btn" @click="dup(detail.id)">📋 Duplicate</button>
+          <button class="btn" @click="toggleAgent(detail.id);detail=null" x-text="detail.enabled!==false?'Disable':'Enable'"></button>
+          <button class="btn btn-red" @click="del(detail.id)">Delete</button>
+          <button class="btn" @click="detail=null;revealedKey=null">Close</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Import Modal -->
+  <template x-if="showImport">
+    <div class="overlay" @mousedown.self="showImport=false">
+      <div class="modal" @keydown.stop style="position:relative;max-width:560px">
+        <button class="modal-close" @click="showImport=false">&times;</button>
+        <h2 x-text="'Import ' + importTitle"></h2>
+        <p class="text-muted mb-2" style="font-size:13px" x-text="importHint"></p>
+
+        <!-- Tab switch: Paste / File -->
+        <div class="flex mb-2" style="gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:fit-content">
+          <button class="btn btn-sm" :class="importTab==='paste'?'btn-accent':''" style="border-radius:0;border:0" @click="importTab='paste'">📋 Paste JSON</button>
+          <button class="btn btn-sm" :class="importTab==='file'?'btn-accent':''" style="border-radius:0;border:0" @click="importTab='file'">📁 Upload File</button>
+        </div>
+
+        <!-- Paste tab -->
+        <div x-show="importTab==='paste'">
+          <textarea x-model="importJson" rows="10" placeholder='Paste JSON here — single object or array...'
+            style="font-family:monospace;font-size:12px;width:100%;box-sizing:border-box"
+            @input="importPreview()"></textarea>
+        </div>
+
+        <!-- File tab with drag-and-drop -->
+        <div x-show="importTab==='file'">
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:border-color .2s"
+            @dragover.prevent="$el.style.borderColor='var(--accent)'"
+            @dragleave="$el.style.borderColor='var(--border)'"
+            @drop.prevent="handleFileDrop($event);$el.style.borderColor='var(--border)'"
+            @click="$refs.importFileInput.click()">
+            <div style="font-size:32px;margin-bottom:8px">📂</div>
+            <div style="font-size:13px;color:var(--text2)">Drop <b>.json</b> file here or click to browse</div>
+            <div x-show="importFileName" style="font-size:12px;color:var(--accent);margin-top:8px" x-text="importFileName"></div>
+          </div>
+          <input type="file" accept=".json" x-ref="importFileInput" style="display:none" @change="handleFileSelect($event)">
+        </div>
+
+        <!-- Preview -->
+        <div x-show="importCount>0" class="mt-2" style="font-size:12px;color:var(--green)">
+          ✅ Found <b x-text="importCount"></b> item(s) ready to import
+        </div>
+        <div x-show="importError" class="mt-2" style="font-size:12px;color:var(--red)" x-text="importError"></div>
+
+        <div class="flex mt-4">
+          <button class="btn btn-accent" @click="doImport()" :disabled="importCount===0">Import</button>
+          <button class="btn" @click="showImport=false">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function agentsApp(){
+  const D={id:'',name:'',agent_type:'custom',icon:'',enabled:true,description:'',rate_limit:60,allowed_hosts:[],command_sets:[],api_key:''};
+  return{
+    agents:[],types:{},sets:[],allHosts:[],
+    showAdd:false,editing:false,f:JSON.parse(JSON.stringify(D)),
+    detail:null,showImport:false,importJson:'',importTitle:'Agents',importHint:'Paste JSON or upload .json file — single agent or array. API keys are NOT imported.',
+    importTab:'paste',importFileName:'',importCount:0,importError:'',
+    importPreview(){
+      this.importError='';this.importCount=0;
+      if(!this.importJson.trim())return;
+      try{const d=JSON.parse(this.importJson);this.importCount=Array.isArray(d)?d.length:1}
+      catch(e){this.importError='Invalid JSON: '+e.message}
+    },
+    handleFileDrop(e){
+      const f=e.dataTransfer.files[0];if(f)this._readFile(f);
+    },
+    handleFileSelect(e){
+      const f=e.target.files[0];if(f)this._readFile(f);
+    },
+    _readFile(f){
+      this.importFileName=f.name;
+      const r=new FileReader();
+      r.onload=()=>{this.importJson=r.result;this.importTab='paste';this.importPreview()};
+      r.readAsText(f);
+    },revealedKey:null,
+
+    async init(){
+      this.agents=await api('GET','/api/admin/agents');
+      this.types=await api('GET','/api/agent-types');
+      this.sets=await api('GET','/api/admin/command-sets');
+      try{this.allHosts=await api('GET','/api/admin/hosts')}catch(e){this.allHosts=[]}
+    },
+    reset(){this.f=JSON.parse(JSON.stringify(D))},
+    getTypeIcon(t){return this.types[t]?.icon||'🤖'},
+    getTypeName(t){return this.types[t]?.name||t},
+    getConnectHint(t){
+      const h=this.types[t]?.connect_hint||'POST {gate_url}/api/exec with X-API-Key header';
+      return h.replace(/\{gate_url\}/g,window.location.origin);
+    },
+    getSetColor(sid){return this.sets.find(s=>s.id===sid)?.color||'#6366f1'},
+    getSetType(sid){return this.sets.find(s=>s.id===sid)?.type||'allow'},
+    getSetEnabled(sid){const s=this.sets.find(x=>x.id===sid);return s?.enabled!==false},
+    toggleHost(hid){
+      this.f.allowed_hosts=this.f.allowed_hosts||[];
+      const i=this.f.allowed_hosts.indexOf(hid);
+      if(i===-1)this.f.allowed_hosts.push(hid);else this.f.allowed_hosts.splice(i,1);
+    },
+    toggleSet(sid){
+      this.f.command_sets=this.f.command_sets||[];
+      const i=this.f.command_sets.indexOf(sid);
+      if(i===-1)this.f.command_sets.push(sid);else this.f.command_sets.splice(i,1);
+    },
+    edit(a){
+      this.f=JSON.parse(JSON.stringify(a));
+      this.f.api_key='';
+      this.f.command_sets=a.command_sets||[];
+      this.f.allowed_hosts=a.allowed_hosts||[];
+      this.editing=true;this.showAdd=true;
+    },
+    async save(){
+      try{
+        this.f.allowed_hosts=this.f.allowed_hosts||[];
+        this.f.command_sets=this.f.command_sets||[];
+        const m=this.editing?'PUT':'POST';
+        const u=this.editing?'/api/admin/agents/'+this.f.id:'/api/admin/agents';
+        await api(m,u,this.f);toast('Saved',3000,'ok');
+        this.showAdd=false;this.editing=false;this.reset();
+        this.agents=await api('GET','/api/admin/agents');
+      }catch(e){toast(e.message,5000,'err')}
+    },
+    async del(id){if(!confirm('Delete agent '+id+'?'))return;try{await api('DELETE','/api/admin/agents/'+id);this.detail=null;this.agents=await api('GET','/api/admin/agents');toast('Deleted',3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async toggleAgent(id){try{await api('POST','/api/admin/agents/'+id+'/toggle');this.agents=await api('GET','/api/admin/agents');if(this.detail&&this.detail.id===id){this.detail=this.agents.find(a=>a.id===id)||null}toast('Toggled',2000,'ok')}catch(e){toast(e.message,3000,'err')}},
+    async dup(id){try{const r=await api('POST','/api/admin/agents/'+id+'/duplicate');this.detail=null;this.agents=await api('GET','/api/admin/agents');toast('Duplicated: '+r.id,3000,'ok')}catch(e){toast(e.message,3000,'err')}},
+    async genKey(id){
+      if(!confirm('Generate new API key? Old key will stop working.'))return;
+      try{const r=await api('POST','/api/admin/agents/'+id+'/generate-key');
+        if(r.api_key){this.revealedKey=r.api_key;toast('Key generated! Save it now.',8000,'warn');this.agents=await api('GET','/api/admin/agents')}
+      }catch(e){toast(e.message,5000,'err')}
+    },
+    async revealKey(id){
+      if(this.revealedKey){this.revealedKey=null;return}
+      try{const r=await api('GET','/api/admin/agents/'+id+'/reveal-key');this.revealedKey=r.api_key||'(not set)'}catch(e){toast(e.message,3000,'err')}
+    },
+    openDetail(a){this.detail=a;this.revealedKey=null},
+    generateKey(){return Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('')},
+    async exportAll(){
+      try{const d=await api('GET','/api/admin/agents/export');
+        const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+        const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='agents.json';a.click();URL.revokeObjectURL(u);toast('Exported',3000,'ok')
+      }catch(e){toast(e.message,4000,'err')}
+    },
+    async doImport(){
+      try{const data=JSON.parse(this.importJson);
+        const r=await api('POST','/api/admin/agents/import',data);
+        toast('Imported: '+r.count,3000,'ok');
+        this.showImport=false;this.importJson='';this.agents=await api('GET','/api/admin/agents');
+      }catch(e){toast(e.message,5000,'err')}
+    }
+  }
+}
+</script>{% endblock %}

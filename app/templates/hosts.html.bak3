@@ -1,0 +1,369 @@
+{% extends "base.html" %}{% set page = 'hosts' %}
+{% block title %}Hosts — MCP Gate{% endblock %}
+{% block content %}
+<style>
+.toggle-switch{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:20px;transition:.2s}
+.toggle-slider:before{position:absolute;content:"";height:14px;width:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+input:checked+.toggle-slider{background:var(--accent)}
+input:checked+.toggle-slider:before{transform:translateX(16px)}
+.host-disabled{opacity:0.4}
+.tag-deny{background:#7f1d1d!important;color:#fff!important}
+.view-btn{padding:4px 10px;border-radius:6px;cursor:pointer;background:var(--bg3);border:1px solid var(--border);font-size:13px;transition:.15s}
+.view-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+/* List view */
+.hosts-list .host-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:.15s}
+.hosts-list .host-row:hover{background:var(--bg3)}
+.hosts-list .host-row:last-child{border-bottom:none}
+.tag-set{cursor:pointer;display:inline-flex;align-items:center;gap:2px;transition:.15s}
+.tag-set:hover{filter:brightness(1.2)}
+.tag-x{opacity:0.5;font-weight:bold;cursor:pointer;line-height:1;padding:0 1px;border-radius:3px;transition:.15s;font-size:13px}
+.tag-x:hover{opacity:1;background:rgba(255,255,255,0.2)}
+</style>
+<div x-data="hostsApp()" x-init="init()">
+  <div class="flex-between mb-4">
+    <h1>🖥 Hosts</h1>
+    <div class="flex" style="gap:6px;align-items:center">
+      <!-- View toggle -->
+      <button class="view-btn" :class="viewMode==='grid'?'active':''" @click="viewMode='grid'" title="Grid">⊞</button>
+      <button class="view-btn" :class="viewMode==='list'?'active':''" @click="viewMode='list'" title="List">☰</button>
+      <button class="btn" @click="showImport=true">📥 Import</button>
+      <button class="btn" @click="exportAll()">📤 Export</button>
+      <button class="btn btn-accent" @click="reset();showAdd=true;editing=false">+ Add Host</button>
+    </div>
+  </div>
+
+  <!-- SSH Public Key info -->
+  <div style="margin-bottom:16px">
+    <div class="card" style="padding:8px 12px;margin:0;font-size:12px"><b>SSH Public Key: </b><code style="font-size:10px;cursor:pointer" onclick="copyText(this.textContent)" title="Click to copy">{{ pub_key or 'Not generated' }}</code></div>
+  </div>
+
+  <!-- GRID VIEW -->
+  <div x-show="viewMode==='grid'" class="grid-3 mb-4">
+    <template x-for="h in hosts" :key="h.id">
+      <div class="card" :class="h.enabled===false?'host-disabled':''" style="cursor:pointer;position:relative" @click="openDetail(h)">
+        <!-- Toggle -->
+        <div style="position:absolute;top:12px;right:12px" @click.stop>
+          <label class="toggle-switch">
+            <input type="checkbox" :checked="h.enabled!==false" @change="toggleHost(h.id)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="flex-between mb-2" style="padding-right:48px">
+          <b x-text="h.name||h.id"></b>
+        </div>
+        <div class="text-muted" style="font-size:12px" x-text="h.user+'@'+h.hostname+':'+h.port"></div>
+        <div class="flex mt-2" style="font-size:12px;gap:4px;flex-wrap:wrap">
+          <span class="text-cyan" x-text="effectiveCount(h)+' commands'"></span>
+          <span x-show="h.group" class="badge" x-text="h.group"></span>
+          <span x-show="h.sandbox_path" class="badge badge-cyan" style="font-size:10px">📁 sandbox</span>
+        </div>
+        <!-- Command sets tags -->
+        <div class="flex mt-2" style="gap:3px;flex-wrap:wrap">
+          <template x-for="sid in (h.command_sets||[])" :key="sid">
+            <a :href="'/command-sets#'+sid" class="tag tag-set" style="font-size:10px;padding:1px 6px"
+              :class="getSetType(sid)==='deny'?'tag-deny':''"
+              :style="getSetType(sid)!=='deny'?'background:'+getSetColor(sid)+';color:#fff':'color:#fff'"
+              @click.stop x-text="(getSetType(sid)==='deny'?'✕ ':'✓ ')+sid"></a>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- LIST VIEW -->
+  <div x-show="viewMode==='list'" class="card mb-4" style="padding:0;overflow:hidden">
+    <div class="hosts-list">
+      <template x-for="h in hosts" :key="h.id">
+        <div class="host-row" :class="h.enabled===false?'host-disabled':''" @click="openDetail(h)">
+          <!-- Toggle -->
+          <div @click.stop>
+            <label class="toggle-switch">
+              <input type="checkbox" :checked="h.enabled!==false" @change="toggleHost(h.id)">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div style="min-width:160px">
+            <b x-text="h.name||h.id" style="font-size:14px"></b>
+            <div class="text-muted" style="font-size:11px" x-text="h.user+'@'+h.hostname+':'+h.port"></div>
+          </div>
+          <span class="text-cyan" style="font-size:12px;min-width:80px" x-text="effectiveCount(h)+' cmds'"></span>
+          <span x-show="h.group" class="badge" x-text="h.group"></span>
+          <span x-show="h.sandbox_path" class="badge badge-cyan" style="font-size:10px">📁</span>
+          <div class="flex" style="gap:3px;flex-wrap:wrap;flex:1">
+            <template x-for="sid in (h.command_sets||[])" :key="sid">
+              <a :href="'/command-sets#'+sid" class="tag tag-set" style="font-size:10px;padding:1px 6px"
+                :class="getSetType(sid)==='deny'?'tag-deny':''"
+                :style="getSetType(sid)!=='deny'?'background:'+getSetColor(sid)+';color:#fff':'color:#fff'"
+                @click.stop x-text="(getSetType(sid)==='deny'?'✕ ':'✓ ')+sid"></a>
+            </template>
+          </div>
+          <div class="flex" style="gap:4px" @click.stop>
+            <button class="btn btn-sm" @click="edit(h)">Edit</button>
+            <button class="btn btn-sm" @click="test(h.id)">SSH</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div x-show="hosts.length===0" class="card text-muted" style="text-align:center;padding:32px">No hosts configured.</div>
+
+  <!-- Add/Edit Form -->
+  <template x-if="showAdd">
+    <div class="overlay" @mousedown.self="showAdd=false">
+      <div class="modal" @keydown.stop style="position:relative;max-width:700px">
+        <button class="modal-close" @click="showAdd=false">&times;</button>
+        <h2 x-text="editing?'Edit Host':'Add Host'"></h2>
+        <div class="grid-2">
+          <div class="form-row"><label>ID *</label><input x-model="f.id" :disabled="editing" placeholder="pve1"></div>
+          <div class="form-row"><label>Name</label><input x-model="f.name" placeholder="Proxmox Server"></div>
+          <div class="form-row"><label>Host/IP *</label><input x-model="f.hostname" placeholder="10.0.0.1"></div>
+          <div class="form-row"><label>Port</label><input type="number" x-model.number="f.port"></div>
+          <div class="form-row"><label>User</label><input x-model="f.user"></div>
+          <div class="form-row"><label>Group</label><input x-model="f.group" placeholder="storage"></div>
+          <div class="form-row"><label data-tip="auto — execute immediately&#10;pessimistic — timeout → reject&#10;optimistic — timeout → execute&#10;strict — wait forever" data-tip-down>Approval Mode</label>
+            <select x-model="f.approval_mode"><option value="auto">auto</option><option value="pessimistic">pessimistic</option><option value="optimistic">optimistic</option><option value="strict">strict</option></select></div>
+          <div class="form-row"><label>Rate Limit (req/min)</label><input type="number" x-model.number="f.rate_limit"></div>
+          <div class="form-row"><label>Approval Timeout (sec)</label><input type="number" x-model.number="f.approval_timeout"></div>
+          <div class="form-row"><label>SSH Timeout (sec)</label><input type="number" x-model.number="f.ssh_timeout"></div>
+          <div class="form-row"><label>Max Output Lines</label><input type="number" x-model.number="f.max_output_lines"></div>
+          <div class="form-row"><label>Exec Delay (sec)</label><input type="number" step="0.1" x-model.number="f.exec_delay"></div>
+          <div class="form-row"><label>Sandbox Path</label><input x-model="f.sandbox_path" placeholder="/tmp/mcp-sandbox"></div>
+        </div>
+        <div class="form-row"><label>Description</label><textarea x-model="f.description" rows="2"></textarea></div>
+        <div class="form-row mt-2">
+          <label>Enabled</label>
+          <label class="toggle-switch" style="margin-top:6px">
+            <input type="checkbox" x-model="f.enabled">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="flex mt-4">
+          <button class="btn btn-accent" @click="save()">Save</button>
+          <button class="btn" @click="showAdd=false;editing=false">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Detail Modal -->
+  <template x-if="detailHost">
+    <div class="overlay" @mousedown.self="detailHost=null">
+      <div class="modal" style="position:relative;max-width:800px">
+        <button class="modal-close" @click="detailHost=null">&times;</button>
+        <div class="flex-between mb-4">
+          <div class="flex" style="align-items:center;gap:8px">
+            <label class="toggle-switch" @click.stop>
+              <input type="checkbox" :checked="detailHost.enabled!==false" @change="toggleHost(detailHost.id)">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="badge" :class="detailHost.enabled!==false?'badge-ok':'badge-err'" x-text="detailHost.enabled!==false?'Enabled':'Disabled'"></span>
+            <h2 style="margin:0" x-text="detailHost.name||detailHost.id"></h2>
+            <code x-text="detailHost.id" style="font-size:12px"></code>
+          </div>
+        </div>
+        <div class="grid-3 mb-4">
+          <div class="stat-card"><div class="stat-label">Connection</div><div style="font-size:13px;margin-top:4px" x-text="detailHost.user+'@'+detailHost.hostname+':'+detailHost.port"></div></div>
+          <div class="stat-card"><div class="stat-label">Mode</div><div style="font-size:14px;margin-top:4px" x-text="detailHost.approval_mode"></div></div>
+          <div class="stat-card"><div class="stat-label">Rate Limit</div><div style="font-size:14px;margin-top:4px" x-text="(detailHost.rate_limit||10)+' / min'"></div></div>
+        </div>
+        <template x-if="detailHost.description"><p class="text-muted mb-4" style="font-size:13px" x-text="detailHost.description"></p></template>
+
+        <!-- Command Sets -->
+        <h2 style="font-size:14px">Command Sets</h2>
+        <div class="flex mt-2 mb-4" style="gap:6px;flex-wrap:wrap;align-items:center">
+          <template x-for="sid in (detailHost.command_sets||[])" :key="sid">
+            <a :href="'/command-sets#'+sid" class="tag tag-set" style="font-size:12px;padding:3px 8px"
+              :class="getSetType(sid)==='deny'?'tag-deny':''"
+              :style="getSetType(sid)!=='deny'?'background:'+getSetColor(sid)+';color:#fff':'color:#fff'">
+              <span x-text="(getSetType(sid)==='deny'?'✕ ':'✓ ')+getSetName(sid)+' ('+getSetCmdCount(sid)+')'"></span>
+              <span class="tag-x" @click.prevent.stop="unlinkSet(detailHost,sid)" title="Unlink">×</span>
+            </a>
+          </template>
+          <span x-show="!(detailHost.command_sets||[]).length" class="text-muted" style="font-size:12px">No sets</span>
+          <template x-if="availableSets(detailHost).length">
+            <select style="font-size:11px;width:auto;padding:2px 6px" @change="linkSet(detailHost,$event.target.value);$event.target.value=''">
+              <option value="">+ Add set...</option>
+              <template x-for="s in availableSets(detailHost)" :key="s.id">
+                <option :value="s.id" x-text="(s.type==='deny'?'✕ ':'✓ ')+(s.name||s.id)"></option>
+              </template>
+            </select>
+          </template>
+        </div>
+
+        <!-- Effective whitelist -->
+        <h2 style="font-size:14px">Effective Whitelist <span class="text-muted" style="font-size:12px;font-weight:normal" x-text="'('+detailWl.length+' commands)'"></span></h2>
+        <div style="max-height:150px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg)">
+          <template x-for="cmd in detailWl" :key="cmd">
+            <div style="font-size:12px;padding:1px 0"><code x-text="cmd"></code></div>
+          </template>
+          <div x-show="!detailWl.length" class="text-muted" style="font-size:12px">No commands</div>
+        </div>
+
+        <!-- Sandbox -->
+        <template x-if="detailHost.sandbox_path">
+          <div class="card mt-4" style="background:var(--bg3)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <h2 style="font-size:14px;margin:0">📁 Sandbox: <code x-text="detailHost.sandbox_path" style="font-size:12px"></code></h2>
+              <div class="flex" style="gap:6px">
+                <span class="text-muted" style="font-size:12px" x-text="sbInfo.size_bytes!==undefined?formatSize(sbInfo.size_bytes):'...'"></span>
+                <span class="text-muted" style="font-size:12px" x-text="sbInfo.file_count!==undefined?sbInfo.file_count+' items':''"></span>
+                <span x-show="sbInfo.exists===true" class="badge badge-ok" style="font-size:10px">OK</span>
+                <span x-show="sbInfo.exists===false" class="badge badge-err" style="font-size:10px">N/A</span>
+                <button class="btn btn-sm" @click="loadSb(detailHost.id)">🔄</button>
+                <button class="btn btn-sm" @click="toggleSbFiles(detailHost.id)" x-text="showSbFiles?'Hide':'Files'"></button>
+                <button class="btn btn-red btn-sm" @click="clearSb(detailHost.id)">🗑️</button>
+              </div>
+            </div>
+            <template x-if="showSbFiles">
+              <div style="margin-top:8px;max-height:250px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+                <table style="font-size:12px;width:100%">
+                  <tr style="position:sticky;top:0;background:var(--card-bg)"><th style="text-align:left;padding:6px 8px">Name</th><th style="width:80px">Size</th><th style="width:120px">Date</th></tr>
+                  <template x-for="f in sbFiles" :key="f.name">
+                    <tr><td style="padding:4px 8px"><code x-text="f.name"></code></td><td class="text-muted" x-text="formatSize(f.size)"></td><td class="text-muted" x-text="f.modified||''"></td></tr>
+                  </template>
+                  <tr x-show="!sbFiles.length"><td colspan="3" class="text-muted" style="padding:8px">Empty</td></tr>
+                </table>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <div class="flex mt-4" style="flex-wrap:wrap;gap:6px">
+          <button class="btn btn-accent" @click="edit(detailHost);detailHost=null">Edit</button>
+          <button class="btn btn-green" @click="test(detailHost.id)">🔌 SSH Test</button>
+          <button class="btn" @click="dup(detailHost.id)">📋 Duplicate</button>
+          <button class="btn btn-red" @click="del(detailHost.id)">Delete</button>
+          <button class="btn" @click="detailHost=null">Close</button>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+  <!-- Import Modal -->
+  <template x-if="showImport">
+    <div class="overlay" @mousedown.self="showImport=false">
+      <div class="modal" @keydown.stop style="position:relative;max-width:560px">
+        <button class="modal-close" @click="showImport=false">&times;</button>
+        <h2 x-text="'Import ' + importTitle"></h2>
+        <p class="text-muted mb-2" style="font-size:13px" x-text="importHint"></p>
+
+        <!-- Tab switch: Paste / File -->
+        <div class="flex mb-2" style="gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:fit-content">
+          <button class="btn btn-sm" :class="importTab==='paste'?'btn-accent':''" style="border-radius:0;border:0" @click="importTab='paste'">📋 Paste JSON</button>
+          <button class="btn btn-sm" :class="importTab==='file'?'btn-accent':''" style="border-radius:0;border:0" @click="importTab='file'">📁 Upload File</button>
+        </div>
+
+        <!-- Paste tab -->
+        <div x-show="importTab==='paste'">
+          <textarea x-model="importJson" rows="10" placeholder='Paste JSON here — single object or array...'
+            style="font-family:monospace;font-size:12px;width:100%;box-sizing:border-box"
+            @input="importPreview()"></textarea>
+        </div>
+
+        <!-- File tab with drag-and-drop -->
+        <div x-show="importTab==='file'">
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:border-color .2s"
+            @dragover.prevent="$el.style.borderColor='var(--accent)'"
+            @dragleave="$el.style.borderColor='var(--border)'"
+            @drop.prevent="handleFileDrop($event);$el.style.borderColor='var(--border)'"
+            @click="$refs.importFileInput.click()">
+            <div style="font-size:32px;margin-bottom:8px">📂</div>
+            <div style="font-size:13px;color:var(--text2)">Drop <b>.json</b> file here or click to browse</div>
+            <div x-show="importFileName" style="font-size:12px;color:var(--accent);margin-top:8px" x-text="importFileName"></div>
+          </div>
+          <input type="file" accept=".json" x-ref="importFileInput" style="display:none" @change="handleFileSelect($event)">
+        </div>
+
+        <!-- Preview -->
+        <div x-show="importCount>0" class="mt-2" style="font-size:12px;color:var(--green)">
+          ✅ Found <b x-text="importCount"></b> item(s) ready to import
+        </div>
+        <div x-show="importError" class="mt-2" style="font-size:12px;color:var(--red)" x-text="importError"></div>
+
+        <div class="flex mt-4">
+          <button class="btn btn-accent" @click="doImport()" :disabled="importCount===0">Import</button>
+          <button class="btn" @click="showImport=false">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </template>
+{% endblock %}
+{% block scripts %}<script>
+function hostsApp(){
+  const D={id:'',name:'',hostname:'',port:22,user:'mcp-reader',group:'',enabled:true,dry_run:false,approval_mode:'pessimistic',approval_timeout:300,rate_limit:10,exec_delay:0,max_output_lines:200,ssh_timeout:30,command_sets:[],whitelist:[],description:'',sandbox_path:''};
+  return{
+    hosts:[],sets:[],showAdd:false,editing:false,f:{...D},detailHost:null,detailWl:[],
+    showImport:false,importJson:'',importTitle:'Hosts',importHint:'Paste JSON or upload .json file — single host or array.',
+    importTab:'paste',importFileName:'',importCount:0,importError:'',
+    importPreview(){
+      this.importError='';this.importCount=0;
+      if(!this.importJson.trim())return;
+      try{const d=JSON.parse(this.importJson);this.importCount=Array.isArray(d)?d.length:1}
+      catch(e){this.importError='Invalid JSON: '+e.message}
+    },
+    handleFileDrop(e){
+      const f=e.dataTransfer.files[0];if(f)this._readFile(f);
+    },
+    handleFileSelect(e){
+      const f=e.target.files[0];if(f)this._readFile(f);
+    },
+    _readFile(f){
+      this.importFileName=f.name;
+      const r=new FileReader();
+      r.onload=()=>{this.importJson=r.result;this.importTab='paste';this.importPreview()};
+      r.readAsText(f);
+    },
+    sbInfo:{},sbFiles:[],showSbFiles:false,viewMode:'grid',
+    async init(){
+      this.hosts=await api('GET','/api/admin/hosts');
+      this.sets=await api('GET','/api/admin/command-sets');
+    },
+    reset(){this.f=JSON.parse(JSON.stringify(D))},
+    edit(h){this.f=JSON.parse(JSON.stringify(h));this.f.command_sets=this.f.command_sets||[];this.f.sandbox_path=this.f.sandbox_path||'';this.editing=true;this.showAdd=true},
+    async save(){
+      try{const m=this.editing?'PUT':'POST';await api(m,(this.editing?'/api/admin/hosts/'+this.f.id:'/api/admin/hosts'),this.f);
+        toast('Saved',3000,'ok');this.showAdd=false;this.editing=false;this.reset();this.hosts=await api('GET','/api/admin/hosts')}catch(e){toast(e.message,5000,'err')}},
+    async del(id){if(!confirm('Delete host '+id+'?'))return;try{await api('DELETE','/api/admin/hosts/'+id);this.detailHost=null;this.hosts=await api('GET','/api/admin/hosts');toast('Deleted',3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async test(id){toast('Testing SSH...',3000,'ok');try{const r=await api('POST','/api/admin/hosts/'+id+'/test');toast(r.ok?'SSH OK: '+r.message:'Error: '+r.message,5000,r.ok?'ok':'err')}catch(e){toast(e.message,5000,'err')}},
+    async dup(id){try{const r=await api('POST','/api/admin/hosts/'+id+'/duplicate');this.detailHost=null;this.hosts=await api('GET','/api/admin/hosts');toast('Duplicated: '+r.id,3000,'ok')}catch(e){toast(e.message,3000,'err')}},
+    async toggleHost(id){try{await api('POST','/api/admin/hosts/'+id+'/toggle');this.hosts=await api('GET','/api/admin/hosts');if(this.detailHost&&this.detailHost.id===id){this.detailHost=this.hosts.find(h=>h.id===id)||null}toast('Toggled',2000,'ok')}catch(e){toast(e.message,3000,'err')}},
+    async openDetail(h){
+      this.detailHost=h;this.sbInfo={};this.sbFiles=[];this.showSbFiles=false;
+      try{this.detailWl=await api('GET','/api/admin/hosts/'+h.id+'/effective-whitelist')}catch(e){this.detailWl=h.whitelist||[]}
+      if(h.sandbox_path)this.loadSb(h.id);
+    },
+    async loadSb(hid){try{this.sbInfo=await api('GET','/api/admin/hosts/'+hid+'/sandbox')}catch(e){this.sbInfo={error:e.message}}},
+    async toggleSbFiles(hid){
+      this.showSbFiles=!this.showSbFiles;
+      if(this.showSbFiles){try{const r=await api('GET','/api/admin/hosts/'+hid+'/sandbox/files');this.sbFiles=r.files||[]}catch(e){this.sbFiles=[];toast(e.message,3000,'err')}}
+    },
+    async clearSb(hid){if(!confirm('Clear ALL files in sandbox?'))return;try{const r=await api('POST','/api/admin/hosts/'+hid+'/sandbox/clear');toast(r.status==='ok'?'Cleared':'Error',3000,r.status==='ok'?'ok':'err');await this.loadSb(hid);this.sbFiles=[];this.showSbFiles=false}catch(e){toast(e.message,3000,'err')}},
+    getSetName(sid){const s=this.sets.find(x=>x.id===sid);return s?s.name||s.id:sid},
+    getSetColor(sid){return this.sets.find(x=>x.id===sid)?.color||'#6366f1'},
+    getSetType(sid){return this.sets.find(x=>x.id===sid)?.type||'allow'},
+    getSetCmdCount(sid){return(this.sets.find(x=>x.id===sid)?.commands||[]).length},
+    availableSets(h){const linked=h.command_sets||[];return this.sets.filter(s=>!linked.includes(s.id))},
+    async linkSet(h,sid){if(!sid)return;h.command_sets=h.command_sets||[];h.command_sets.push(sid);await api('PUT','/api/admin/hosts/'+h.id,h);toast('Set linked',2000,'ok');this.hosts=await api('GET','/api/admin/hosts')},
+    async unlinkSet(h,sid){h.command_sets=(h.command_sets||[]).filter(s=>s!==sid);await api('PUT','/api/admin/hosts/'+h.id,h);toast('Set unlinked',2000,'ok');this.hosts=await api('GET','/api/admin/hosts')},
+    effectiveCount(h){let own=(h.whitelist||[]).length;let from=0;for(const sid of(h.command_sets||[])){const s=this.sets.find(x=>x.id===sid);if(s)from+=(s.commands||[]).length}return own+from},
+    async exportAll(){
+      try{const d=await api('GET','/api/admin/hosts/export');
+        const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+        const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='hosts.json';a.click();URL.revokeObjectURL(u);toast('Exported',3000,'ok')
+      }catch(e){toast(e.message,4000,'err')}
+    },
+    async doImport(){
+      try{const data=JSON.parse(this.importJson);
+        const r=await api('POST','/api/admin/hosts/import',data);
+        toast('Imported: '+r.count,3000,'ok');
+        this.showImport=false;this.importJson='';this.hosts=await api('GET','/api/admin/hosts');
+      }catch(e){toast(e.message,5000,'err')}
+    },
+    formatSize(b){if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'}
+  }
+}
+</script>{% endblock %}

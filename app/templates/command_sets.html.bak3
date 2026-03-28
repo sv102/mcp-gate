@@ -1,0 +1,329 @@
+{% extends "base.html" %}{% set page = 'command_sets' %}
+{% block title %}Command Sets — MCP Gate{% endblock %}
+{% block content %}
+<style>
+.toggle-switch{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:20px;transition:.2s}
+.toggle-slider:before{position:absolute;content:"";height:14px;width:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+input:checked+.toggle-slider{background:var(--accent)}
+input:checked+.toggle-slider:before{transform:translateX(16px)}
+.set-card-disabled{opacity:0.4}
+.tag-deny{background:#7f1d1d!important;color:#fff}
+</style>
+<div x-data="setsApp()" x-init="init()">
+  <div class="flex-between mb-4">
+    <h1>📦 Command Sets</h1>
+    <div class="flex">
+      <button class="btn btn-accent" @click="reset();showAdd=true;editing=false">+ Create</button>
+      <button class="btn" @click="showImport=true">📥 Import</button>
+      <button class="btn" @click="exportAll()">📤 Export All</button>
+    </div>
+  </div>
+
+  <!-- Sets list -->
+  <template x-for="s in sets" :key="s.id">
+    <div class="card" :class="s.enabled===false?'set-card-disabled':''">
+      <div class="flex-between mb-2">
+        <div class="flex" style="align-items:center;gap:8px">
+          <!-- Toggle switch -->
+          <label class="toggle-switch" @click.stop>
+            <input type="checkbox" :checked="s.enabled!==false" @change="toggleSet(s.id)">
+            <span class="toggle-slider"></span>
+          </label>
+          <!-- Tag: deny=dark red + ✕, allow=custom color + ✓ -->
+          <span class="tag" :class="s.type==='deny'?'tag-deny':''"
+            :style="s.type!=='deny'?'background:'+s.color+';color:#fff':''"
+            x-text="(s.type==='deny'?'✕ ':'✓ ')+(s.id)"></span>
+          <b x-text="s.name||s.id"></b>
+          <span class="badge" :class="s.type==='deny'?'badge-err':'badge-ok'"
+            style="font-size:10px" x-text="s.type==='deny'?'deny':'allow'"></span>
+          <span class="text-muted" style="font-size:12px" x-text="(s.commands||[]).length+' commands'"></span>
+        </div>
+        <div class="flex" style="gap:4px">
+          <button class="btn btn-sm" @click="editSet(s)">Edit</button>
+          <button class="btn btn-sm" @click="exportSet(s.id)">📤</button>
+          <button class="btn btn-sm" style="color:var(--red)" @click="delSet(s.id)">✕</button>
+        </div>
+      </div>
+      <template x-if="s.description"><p class="text-muted mb-2" style="font-size:12px" x-text="s.description"></p></template>
+
+      <!-- Used by hosts / agents -->
+      <div class="flex mb-2" style="gap:4px;flex-wrap:wrap">
+        <span class="text-muted" style="font-size:11px">Used by:</span>
+        <template x-for="hname in usedBy(s.id)" :key="hname"><span class="badge badge-ok" style="margin-right:4px" x-text="hname"></span></template>
+        <span x-show="!usedBy(s.id).length" class="text-muted" style="font-size:11px">—</span>
+      </div>
+
+      <!-- Commands table (only for allow sets; deny sets show compact list) -->
+      <template x-if="s.type!=='deny'">
+        <div>
+          <table style="margin-top:8px">
+            <thead><tr><th style="min-width:300px">Command</th><th style="width:60px">Type</th><th style="width:110px">Approval</th><th style="width:50px">Delay</th><th style="width:200px">Description</th><th style="width:80px"></th></tr></thead>
+            <tbody>
+              <template x-for="(w,i) in (s.commands||[])" :key="i">
+                <tr>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:4px">
+                      <code style="white-space:pre-wrap;word-break:break-all;flex:1;line-height:1.5;display:block" x-text="w.cmd"></code>
+                      <button class="btn-icon" @click="copyText(w.cmd)" title="Copy">📋</button>
+                      <button class="btn-icon" style="font-size:11px;padding:0 3px"
+                        :style="(w.params&&Object.keys(w.params).length)?'color:var(--green)':'color:var(--text2)'"
+                        @click="toggleParams(s,i)"
+                        :title="(w.params&&Object.keys(w.params).length)?Object.keys(w.params).length+' param(s)':'Add params'"
+                        x-text="(w.params&&Object.keys(w.params).length)?'⚙'+Object.keys(w.params).length:'⚙'"></button>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge" style="cursor:pointer;font-size:11px" :class="w.category==='write'?'badge-warn':'badge-ok'"
+                      @click="cycleCategory(s,i)" x-text="w.category||'read'" data-tip="Click to toggle"></span>
+                  </td>
+                  <td>
+                    <select style="font-size:11px;padding:1px 2px;width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:4px"
+                      :value="w.approval||''" @change="setCmdProp(s,i,'approval',$event.target.value)">
+                      <option value="">by host</option><option value="auto">auto</option><option value="pessimistic">pessim.</option><option value="optimistic">optim.</option><option value="strict">strict</option>
+                    </select>
+                  </td>
+                  <td><input type="number" step="0.1" min="0" style="width:100%;font-size:11px;padding:2px 4px;text-align:center" :value="w.exec_delay||0" @change="setCmdProp(s,i,'exec_delay',parseFloat($event.target.value)||0)"></td>
+                  <td><input style="width:100%;font-size:11px;padding:2px 4px" :value="w.description||''" placeholder="—" @change="setCmdProp(s,i,'description',$event.target.value)"></td>
+                  <td>
+                    <div style="display:flex;gap:2px">
+                      <button class="btn-icon" @click="moveCmd(s,i,-1)" title="Up">▲</button>
+                      <button class="btn-icon" @click="moveCmd(s,i,1)" title="Down">▼</button>
+                      <button class="btn-icon" style="color:var(--red)" @click="rmCmd(s,i)">✕</button>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Params row -->
+                <tr x-show="paramEdit===s.id+'-'+i" :style="'background:var(--card-bg)'" >
+                  <td colspan="6" style="padding:8px 12px">
+                    <div style="border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card-bg)">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                        <b style="font-size:13px">⚙ Parameters</b>
+                        <button class="btn btn-accent btn-sm" @click="addParam(s,i)">+ Add</button>
+                      </div>
+                      <div x-show="!w.params||!Object.keys(w.params||{}).length" class="text-muted" style="font-size:12px;padding:4px">
+                        No parameters. Use <code>{name}</code> placeholders in command, then add matching params here.
+                      </div>
+                      <template x-for="pname in Object.keys(w.params||{})" :key="pname">
+                        <div style="display:grid;grid-template-columns:100px 1fr 70px 90px 1fr 28px;gap:4px;align-items:center;margin-top:4px;font-size:11px">
+                          <code style="color:var(--green)" x-text="'{'+pname+'}'"></code>
+                          <input :value="w.params[pname].pattern||''" placeholder="regex pattern *" @change="setParamProp(s,i,pname,'pattern',$event.target.value)" style="font-size:11px;font-family:monospace">
+                          <input type="number" :value="w.params[pname].max_length||2048" min="1" @change="setParamProp(s,i,pname,'max_length',parseInt($event.target.value)||2048)" style="font-size:11px" title="Max length">
+                          <input :value="w.params[pname].default!==undefined?w.params[pname].default:''" placeholder="default" @change="setParamProp(s,i,pname,'default',$event.target.value||undefined)" style="font-size:11px">
+                          <input :value="w.params[pname].description||''" placeholder="description" @change="setParamProp(s,i,pname,'description',$event.target.value)" style="font-size:11px">
+                          <button class="btn-icon" style="color:var(--red);font-size:13px" @click="delParam(s,i,pname)">✕</button>
+                        </div>
+                      </template>
+                      <div x-show="w.params&&Object.keys(w.params||{}).length" class="text-muted mt-2" style="font-size:10px">name · regex · max len · default · description</div>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <!-- Add command row -->
+          <div class="mt-2" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <input :id="'ac-'+s.id" placeholder="SSH Command..." style="flex:2;min-width:180px;font-size:12px" @keydown.enter="addCmdFromRow(s)">
+            <select :id="'at-'+s.id" style="width:70px;font-size:12px"><option value="read">read</option><option value="write">write</option></select>
+            <select :id="'aa-'+s.id" style="width:100px;font-size:12px"><option value="">by host</option><option value="auto">auto</option><option value="pessimistic">pessim.</option><option value="optimistic">optim.</option><option value="strict">strict</option></select>
+            <input :id="'ad-'+s.id" placeholder="Description" style="flex:1;min-width:120px;font-size:12px">
+            <button class="btn btn-accent btn-sm" @click="addCmdFromRow(s)">+</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Deny set: compact list of blocked commands -->
+      <template x-if="s.type==='deny'">
+        <div style="margin-top:8px">
+          <div class="text-muted" style="font-size:11px;margin-bottom:6px">Blocked commands (highest priority):</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            <template x-for="(w,i) in (s.commands||[])" :key="i">
+              <div style="display:flex;align-items:center;gap:2px;background:var(--bg3);border:1px solid #7f1d1d44;border-radius:4px;padding:2px 6px">
+                <code style="font-size:11px;color:#fca5a5" x-text="w.cmd"></code>
+                <button class="btn-icon" style="color:var(--red);font-size:11px" @click="rmCmd(s,i)">✕</button>
+              </div>
+            </template>
+            <span x-show="!(s.commands||[]).length" class="text-muted" style="font-size:12px">No blocked commands yet</span>
+          </div>
+          <!-- Add deny command -->
+          <div class="mt-2" style="display:flex;gap:6px;align-items:center">
+            <input :id="'ac-'+s.id" placeholder="Command to block..." style="flex:1;font-size:12px" @keydown.enter="addDenyCmd(s)">
+            <button class="btn btn-sm" style="background:#7f1d1d;color:#fff" @click="addDenyCmd(s)">+ Block</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <div x-show="sets.length===0" class="card text-muted" style="text-align:center;padding:32px">No command sets.</div>
+
+  <!-- Create/Edit Modal -->
+  <template x-if="showAdd">
+    <div class="overlay" @mousedown.self="showAdd=false">
+      <div class="modal" style="position:relative">
+        <button class="modal-close" @click="showAdd=false">&times;</button>
+        <h2 x-text="editing?'Edit Set':'Create Set'"></h2>
+        <div class="grid-2">
+          <div class="form-row"><label>ID *</label><input x-model="f.id" :disabled="editing"></div>
+          <div class="form-row"><label>Name *</label><input x-model="f.name"></div>
+          <div class="form-row">
+            <label>Type</label>
+            <select x-model="f.type" @change="if(f.type==='deny')f.color='#7f1d1d'">
+              <option value="allow">✓ allow — разрешающий</option>
+              <option value="deny">✕ deny — запрещающий</option>
+            </select>
+          </div>
+          <div class="form-row"><label>Category</label><select x-model="f.category"><option value="read">read</option><option value="write">write</option><option value="mixed">mixed</option></select></div>
+          <div class="form-row">
+            <label>Color</label>
+            <div class="flex" style="align-items:center;gap:8px">
+              <input type="color" x-model="f.color" :disabled="f.type==='deny'" style="width:50px;height:30px;padding:2px;cursor:pointer">
+              <span class="tag" :class="f.type==='deny'?'tag-deny':''" :style="f.type!=='deny'?'background:'+f.color+';color:#fff':''" x-text="(f.type==='deny'?'✕ ':'✓ ')+(f.id||'preview')"></span>
+              <span x-show="f.type==='deny'" class="text-muted" style="font-size:11px">цвет фиксирован</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Enabled</label>
+            <label class="toggle-switch" style="margin-top:6px">
+              <input type="checkbox" x-model="f.enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="form-row"><label>Description</label><textarea x-model="f.description" rows="2"></textarea></div>
+        <div class="flex mt-4">
+          <button class="btn btn-accent" @click="saveSet()">Save</button>
+          <button class="btn" @click="showAdd=false;editing=false">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Import Modal -->
+  <template x-if="showImport">
+    <div class="overlay" @mousedown.self="showImport=false">
+      <div class="modal" @keydown.stop style="position:relative;max-width:560px">
+        <button class="modal-close" @click="showImport=false">&times;</button>
+        <h2 x-text="'Import ' + importTitle"></h2>
+        <p class="text-muted mb-2" style="font-size:13px" x-text="importHint"></p>
+
+        <!-- Tab switch: Paste / File -->
+        <div class="flex mb-2" style="gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:fit-content">
+          <button class="btn btn-sm" :class="importTab==='paste'?'btn-accent':''" style="border-radius:0;border:0" @click="importTab='paste'">📋 Paste JSON</button>
+          <button class="btn btn-sm" :class="importTab==='file'?'btn-accent':''" style="border-radius:0;border:0" @click="importTab='file'">📁 Upload File</button>
+        </div>
+
+        <!-- Paste tab -->
+        <div x-show="importTab==='paste'">
+          <textarea x-model="importJson" rows="10" placeholder='Paste JSON here — single object or array...'
+            style="font-family:monospace;font-size:12px;width:100%;box-sizing:border-box"
+            @input="importPreview()"></textarea>
+        </div>
+
+        <!-- File tab with drag-and-drop -->
+        <div x-show="importTab==='file'">
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:border-color .2s"
+            @dragover.prevent="$el.style.borderColor='var(--accent)'"
+            @dragleave="$el.style.borderColor='var(--border)'"
+            @drop.prevent="handleFileDrop($event);$el.style.borderColor='var(--border)'"
+            @click="$refs.importFileInput.click()">
+            <div style="font-size:32px;margin-bottom:8px">📂</div>
+            <div style="font-size:13px;color:var(--text2)">Drop <b>.json</b> file here or click to browse</div>
+            <div x-show="importFileName" style="font-size:12px;color:var(--accent);margin-top:8px" x-text="importFileName"></div>
+          </div>
+          <input type="file" accept=".json" x-ref="importFileInput" style="display:none" @change="handleFileSelect($event)">
+        </div>
+
+        <!-- Preview -->
+        <div x-show="importCount>0" class="mt-2" style="font-size:12px;color:var(--green)">
+          ✅ Found <b x-text="importCount"></b> item(s) ready to import
+        </div>
+        <div x-show="importError" class="mt-2" style="font-size:12px;color:var(--red)" x-text="importError"></div>
+
+        <div class="flex mt-4">
+          <button class="btn btn-accent" @click="doImport()" :disabled="importCount===0">Import</button>
+          <button class="btn" @click="showImport=false">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function setsApp(){
+  const D={id:'',name:'',description:'',category:'read',type:'allow',color:'#6366f1',enabled:true,commands:[]};
+  return{
+    sets:[],hosts:[],agents:[],showAdd:false,editing:false,f:{...D},showImport:false,importJson:'',importTitle:'Command Sets',importHint:'Paste JSON or upload .json file — single set or array of sets.',
+    importTab:'paste',importFileName:'',importCount:0,importError:'',
+    importPreview(){
+      this.importError='';this.importCount=0;
+      if(!this.importJson.trim())return;
+      try{const d=JSON.parse(this.importJson);this.importCount=Array.isArray(d)?d.length:1}
+      catch(e){this.importError='Invalid JSON: '+e.message}
+    },
+    handleFileDrop(e){
+      const f=e.dataTransfer.files[0];if(f)this._readFile(f);
+    },
+    handleFileSelect(e){
+      const f=e.target.files[0];if(f)this._readFile(f);
+    },
+    _readFile(f){
+      this.importFileName=f.name;
+      const r=new FileReader();
+      r.onload=()=>{this.importJson=r.result;this.importTab='paste';this.importPreview()};
+      r.readAsText(f);
+    },paramEdit:null,
+    async init(){
+      this.sets=await api('GET','/api/admin/command-sets');
+      this.hosts=await api('GET','/api/admin/hosts');
+      this.agents=await api('GET','/api/admin/agents');
+    },
+    reset(){this.f=JSON.parse(JSON.stringify(D))},
+    editSet(s){this.f=JSON.parse(JSON.stringify(s));if(this.f.enabled===undefined)this.f.enabled=true;this.editing=true;this.showAdd=true},
+    async saveSet(){try{const m=this.editing?'PUT':'POST';await api(m,(this.editing?'/api/admin/command-sets/'+this.f.id:'/api/admin/command-sets'),this.f);toast('Saved',3000,'ok');this.showAdd=false;this.editing=false;this.reset();this.sets=await api('GET','/api/admin/command-sets')}catch(e){toast(e.message,5000,'err')}},
+    async delSet(id){if(!confirm('Delete '+id+'?'))return;try{await api('DELETE','/api/admin/command-sets/'+id);this.sets=await api('GET','/api/admin/command-sets');this.hosts=await api('GET','/api/admin/hosts');toast('Deleted',3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async toggleSet(id){try{await api('POST','/api/admin/command-sets/'+id+'/toggle');this.sets=await api('GET','/api/admin/command-sets');toast('Toggled',2000,'ok')}catch(e){toast(e.message,3000,'err')}},
+    addCmdFromRow(s){
+      const c=document.getElementById('ac-'+s.id)?.value;if(!c)return;
+      const cat=document.getElementById('at-'+s.id)?.value||'read';
+      const appr=document.getElementById('aa-'+s.id)?.value||'';
+      const desc=document.getElementById('ad-'+s.id)?.value||'';
+      s.commands=s.commands||[];const e={cmd:c,category:cat};if(appr)e.approval=appr;if(desc)e.description=desc;
+      s.commands.push(e);document.getElementById('ac-'+s.id).value='';
+      if(document.getElementById('ad-'+s.id))document.getElementById('ad-'+s.id).value='';
+      this._save(s);
+    },
+    addDenyCmd(s){
+      const inp=document.getElementById('ac-'+s.id);const c=inp?.value?.trim();if(!c)return;
+      s.commands=s.commands||[];s.commands.push({cmd:c,category:'read'});
+      inp.value='';this._save(s);
+    },
+    async rmCmd(s,i){s.commands.splice(i,1);await this._save(s)},
+    async setCmdProp(s,i,p,v){if(p==='approval'&&!v)delete s.commands[i].approval;else if(p==='exec_delay'&&v===0)delete s.commands[i].exec_delay;else s.commands[i][p]=v;await this._save(s)},
+    cycleCategory(s,i){s.commands[i].category=s.commands[i].category==='read'?'write':'read';this._save(s)},
+    async moveCmd(s,i,d){const j=i+d;if(j<0||j>=s.commands.length)return;[s.commands[i],s.commands[j]]=[s.commands[j],s.commands[i]];await this._save(s)},
+    async _save(s){try{await api('PUT','/api/admin/command-sets/'+s.id,s);toast('Updated',2000,'ok');this.sets=await api('GET','/api/admin/command-sets')}catch(e){toast(e.message,4000,'err')}},
+    /* Params */
+    toggleParams(s,i){const k=s.id+'-'+i;this.paramEdit=this.paramEdit===k?null:k},
+    addParam(s,i){
+      const name=prompt('Parameter name (letters, digits, _):');
+      if(!name||!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)){if(name)toast('Invalid name',3000,'err');return}
+      s.commands[i].params=s.commands[i].params||{};
+      if(s.commands[i].params[name]){toast('Exists',2000,'warn');return}
+      s.commands[i].params[name]={pattern:'',max_length:2048,description:''};this._save(s)
+    },
+    delParam(s,i,pname){if(!confirm('Delete {'+pname+'}?'))return;delete s.commands[i].params[pname];if(!Object.keys(s.commands[i].params).length)delete s.commands[i].params;this._save(s)},
+    setParamProp(s,i,pname,prop,val){if(!s.commands[i].params?.[pname])return;if(val===undefined||val==='')delete s.commands[i].params[pname][prop];else s.commands[i].params[pname][prop]=val;this._save(s)},
+    /* Export/Import */
+    async exportSet(id){try{const d=await api('GET','/api/admin/command-sets/'+id+'/export');const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=id+'.json';a.click();URL.revokeObjectURL(u);toast('Exported',3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async exportAll(){try{const all=[];for(const s of this.sets){const d=await api('GET','/api/admin/command-sets/'+s.id+'/export');all.push(d)}const b=new Blob([JSON.stringify(all,null,2)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='command_sets.json';a.click();URL.revokeObjectURL(u);toast('Exported',3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async doImport(){try{const data=JSON.parse(this.importJson);await api('POST','/api/admin/command-sets/import',data);toast('Imported',3000,'ok');this.showImport=false;this.importJson='';this.sets=await api('GET','/api/admin/command-sets')}catch(e){toast(e.message,5000,'err')}},
+    usedBy(sid){
+      const h=this.hosts.filter(h=>(h.command_sets||[]).includes(sid)).map(h=>h.name||h.id);
+      const a=this.agents.filter(a=>(a.command_sets||[]).includes(sid)).map(a=>'[A] '+(a.name||a.id));
+      return [...h,...a];
+    }
+  }
+}
+</script>{% endblock %}

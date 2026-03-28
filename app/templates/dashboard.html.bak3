@@ -1,0 +1,197 @@
+{% extends "base.html" %}{% set page = 'dashboard' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<style>
+.tag-set{cursor:pointer;display:inline-flex;align-items:center;gap:2px;transition:.15s;text-decoration:none;font-size:10px;padding:1px 6px;border-radius:4px;font-weight:500}
+.tag-set:hover{filter:brightness(1.2)}
+.dash-tile{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px;transition:border-color .15s,opacity .15s}
+.dash-tile:hover{border-color:var(--accent2)}
+.dash-tile.disabled{opacity:.45}
+.dash-tile-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.dash-tile-icon{font-size:18px;flex-shrink:0}
+.dash-tile-name{font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-tile-badges{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.dash-tile-meta{font-size:11px;color:var(--text2);margin-bottom:4px}
+.dash-tile-tags{display:flex;flex-wrap:wrap;gap:3px}
+.dash-tiles{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.ping-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dash-controls{display:flex;align-items:center;gap:4px}
+.dash-controls select{font-size:11px;padding:2px 4px;width:100px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text)}
+.dash-controls .btn{padding:2px 6px;font-size:11px}
+</style>
+<div x-data="dashApp()" x-init="init()">
+  <div class="flex-between mb-2"><h1 data-i18n="dashboard.title">Dashboard</h1><span class="text-muted">v{{ version }}</span></div>
+
+  <!-- Metrics: 24h + 7d -->
+  <template x-if="m">
+    <div class="grid-2 mb-2">
+      <div class="card"><h2 style="margin-top:0" data-i18n="dashboard.24h">Last 24 hours</h2>
+        <div class="grid-3">
+          <div class="stat-card"><div class="stat-num text-green" x-text="m['24h'].ok"></div><div class="stat-label" data-i18n="dashboard.success">Success</div></div>
+          <div class="stat-card"><div class="stat-num" style="color:var(--orange)" x-text="m['24h'].blocked"></div><div class="stat-label" data-i18n="dashboard.blocked">Blocked</div></div>
+          <div class="stat-card"><div class="stat-num text-red" x-text="m['24h'].error"></div><div class="stat-label" data-i18n="dashboard.errors">Errors</div></div>
+        </div>
+      </div>
+      <div class="card"><h2 style="margin-top:0" data-i18n="dashboard.7d">Last 7 days</h2>
+        <div class="grid-3">
+          <div class="stat-card"><div class="stat-num text-green" x-text="m['7d'].ok"></div><div class="stat-label" data-i18n="dashboard.success">Success</div></div>
+          <div class="stat-card"><div class="stat-num" style="color:var(--orange)" x-text="m['7d'].blocked"></div><div class="stat-label" data-i18n="dashboard.blocked">Blocked</div></div>
+          <div class="stat-card"><div class="stat-num text-red" x-text="m['7d'].error"></div><div class="stat-label" data-i18n="dashboard.errors">Errors</div></div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Agents -->
+  <div class="card mb-2">
+    <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.agents">Agents</h2><a href="/agents" class="btn btn-sm">Manage →</a></div>
+    <div class="dash-tiles">
+      <template x-for="a in agents" :key="a.id">
+        <div class="dash-tile" :class="a.enabled?'':'disabled'">
+          <div class="dash-tile-header">
+            <span class="dash-tile-icon" x-text="a.icon||'🤖'"></span>
+            <span class="dash-tile-name" x-text="a.name||a.id"></span>
+            <div class="dash-tile-badges">
+              <span class="badge" :class="a.enabled?'badge-ok':'badge-err'" style="font-size:9px" x-text="a.enabled?'ON':'OFF'"></span>
+            </div>
+          </div>
+          <div class="dash-tile-meta" x-text="(a.type||'custom')+' · '+(a.allowed_hosts?.length?a.allowed_hosts.length+' hosts':'all hosts')"></div>
+          <div class="dash-tile-tags">
+            <template x-for="sid in (a.command_sets||[])" :key="sid">
+              <a :href="'/command-sets#'+sid" class="tag-set"
+                :style="getSetType(sid)==='deny'?'background:#7f1d1d;color:#fff':'background:'+getSetColor(sid)+';color:#fff'"
+                x-text="(getSetType(sid)==='deny'?'✕ ':'✓ ')+sid"></a>
+            </template>
+          </div>
+        </div>
+      </template>
+      <span x-show="agents.length===0" class="text-muted" style="font-size:13px"><a href="/agents" data-i18n="dashboard.add_agent">Add agent</a></span>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <!-- Hosts -->
+    <div class="card">
+      <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.hosts">Hosts</h2><a href="/hosts" class="btn btn-sm">Manage →</a></div>
+      <div style="display:grid;gap:8px">
+        <template x-for="h in hosts" :key="h.id">
+          <div class="dash-tile" :class="h.enabled?'':'disabled'">
+            <div class="dash-tile-header">
+              <span class="ping-dot"
+                :style="'background:'+(pingOk(h.id)?'var(--green)':pingChecked(h.id)?'var(--red)':'var(--text2)')"
+                :data-tip="pingTip(h.id)" data-tip-down></span>
+              <span class="dash-tile-name" x-text="h.name||h.id"></span>
+              <div class="dash-tile-badges">
+                <span class="badge" :class="h.enabled?'badge-ok':'badge-err'" style="font-size:9px;cursor:pointer"
+                  x-text="h.enabled?'ON':'OFF'" @click="toggleHost(h)"></span>
+              </div>
+            </div>
+            <div class="dash-tile-meta">
+              <code style="font-size:11px" x-text="h.user+'@'+h.hostname"></code>
+              · <span x-text="h.group||'—'"></span>
+              · <span x-text="(h.whitelist||[]).length + setsCmdCount(h)"></span> cmds
+              <template x-if="pingChecked(h.id)">
+                <span> · <span :class="pingOk(h.id)?'text-green':'text-red'" x-text="pingMs(h.id)+'ms'"></span></span>
+              </template>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+              <div class="dash-tile-tags">
+                <template x-for="sid in (h.command_sets||[])" :key="sid">
+                  <a :href="'/command-sets#'+sid" class="tag-set"
+                    :style="getSetType(sid)==='deny'?'background:#7f1d1d;color:#fff':'background:'+getSetColor(sid)+';color:#fff'"
+                    x-text="(getSetType(sid)==='deny'?'✕ ':'✓ ')+sid"></a>
+                </template>
+              </div>
+              <div class="dash-controls">
+                <select :value="h.approval_mode||'pessimistic'" @change="changeMode(h,$event.target.value)">
+                  <option value="auto">auto</option><option value="pessimistic">pessimistic</option>
+                  <option value="optimistic">optimistic</option><option value="strict">strict</option>
+                </select>
+                <button class="btn btn-sm" @click="testHost(h.id)" data-tip="SSH test">🔌</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div x-show="hosts.length===0" class="text-muted" style="text-align:center;padding:16px;font-size:13px">
+        <a href="/hosts" data-i18n="dashboard.add_host">Add a host</a>
+      </div>
+    </div>
+
+    <!-- Approvals -->
+    <div class="card">
+      <h2 style="margin-top:0" data-i18n="dashboard.pending_approvals">Approvals (<span x-text="pending.length"></span>)</h2>
+      <template x-for="p in pending" :key="p.approval_id">
+        <div class="dash-tile" style="margin-bottom:8px">
+          <div class="flex-between">
+            <div><code style="font-size:11px" x-text="p.approval_id"></code> <span class="text-muted" style="font-size:12px" x-text="p.host_id"></span> <code style="font-size:12px" x-text="p.command"></code></div>
+            <div class="flex" style="gap:6px">
+              <button class="btn btn-green btn-sm" @click="resolve(p.approval_id,'approve')">✓</button>
+              <button class="btn btn-red btn-sm" @click="resolve(p.approval_id,'reject')">✕</button>
+            </div>
+          </div>
+          <template x-if="p.timeout&&p.approval_mode!=='strict'">
+            <div style="margin-top:6px">
+              <div class="approval-bar"><div class="approval-bar-fill" :style="'width:'+Math.max(0,Math.min(100,((p.created_at+p.timeout-_now)/p.timeout)*100))+'%;background:'+(p.approval_mode==='optimistic'?'var(--green)':'var(--red)')"></div></div>
+              <div style="font-size:10px;margin-top:2px;font-weight:600" :style="'color:'+(p.approval_mode==='optimistic'?'var(--green)':'var(--red)')"><span x-text="(p.approval_mode==='optimistic'?'✅ ':'❌ ')+Math.max(0,Math.round(p.created_at+p.timeout-_now))+'s'"></span></div>
+            </div>
+          </template>
+        </div>
+      </template>
+      <p x-show="pending.length===0" class="text-muted" style="text-align:center;padding:16px;font-size:13px" x-text="T('approvals.no_pending')||'No pending'"></p>
+    </div>
+  </div>
+
+  <!-- Recent activity -->
+  <div class="card">
+    <div class="flex-between"><h2 style="margin-top:0" data-i18n="dashboard.recent">Recent Activity</h2><a href="/audit" class="btn btn-sm">Audit Log →</a></div>
+    <table><thead><tr><th>Time</th><th>Host</th><th>Agent</th><th>Command</th><th>Source</th><th>Status</th><th>Duration</th></tr></thead><tbody>
+      <template x-for="e in recent" :key="e.id||e.ts">
+        <tr>
+          <td class="text-muted" style="font-size:11px;white-space:nowrap"><span x-text="ts(e.ts)"></span><span x-show="isNewEvent(e.ts)" class="badge-new" x-init="setTimeout(()=>{if($el)$el.classList.add('fade-out')},8000)">NEW</span></td>
+          <td><code x-text="e.host_id||'-'"></code></td>
+          <td class="text-muted" style="font-size:11px" x-text="e.agent_id||'—'"></td>
+          <td><code x-text="e.command||'-'" style="max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis"></code></td>
+          <td style="font-size:12px" x-text="e.source||'-'"></td>
+          <td x-html="badge(e.status||'?')"></td>
+          <td style="font-size:12px" x-text="e.duration_ms?e.duration_ms+'ms':'—'"></td>
+        </tr>
+      </template>
+    </tbody></table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function dashApp(){
+  return{
+    m:null,hosts:{{ hosts|tojson }},agents:{{ agents|tojson }},pending:{{ pending|tojson }},recent:{{ recent|tojson }},sets:[],pings:{},_now:Date.now()/1000,
+    async init(){
+      this.m=await api('GET','/api/admin/metrics');setInterval(()=>this._now=Date.now()/1000,1000);
+      try{this.sets=await api('GET','/api/admin/command-sets')}catch(e){}
+      this.refreshPing();this._updateNavBadge();
+      setInterval(()=>this.refreshPing(),60000);
+      this._ws();
+    },
+    async refreshPing(){try{this.pings=await api('GET','/api/admin/hosts/status')}catch(e){}},
+    pingOk(id){return this.pings[id]?.ok===true},
+    pingChecked(id){return !!this.pings[id]},
+    pingMs(id){return this.pings[id]?.ms||0},
+    pingTip(id){const p=this.pings[id];if(!p)return'Checking...';return(p.ok?'🟢 Online':'🔴 Offline')+'\n'+p.msg+'\nPing: '+p.ms+'ms\n'+new Date(p.ts*1000).toLocaleTimeString()},
+    async toggleHost(h){try{const r=await api('POST','/api/admin/hosts/'+h.id+'/toggle');h.enabled=r.enabled;toast(h.id+': '+(r.enabled?'on':'off'),3000,r.enabled?'ok':'warn')}catch(e){toast(e.message,4000,'err')}},
+    async changeMode(h,mode){try{await api('PUT','/api/admin/hosts/'+h.id+'/mode',{mode});h.approval_mode=mode;toast(h.id+': '+mode,3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async testHost(id){toast('SSH...',2000,'info');try{const r=await api('POST','/api/admin/hosts/'+id+'/test');toast(id+': '+(r.ok?'OK':'Error: '+r.message),4000,r.ok?'ok':'err')}catch(e){toast(e.message,4000,'err')}},
+    async resolve(aid,action){try{await api('POST','/api/admin/'+action+'/'+aid);this.pending=this.pending.filter(p=>p.approval_id!==aid);toast(action==='approve'?'Approved':'Rejected',3000,action==='approve'?'ok':'warn')}catch(e){toast(e.message,4000,'err')}},
+    _updateNavBadge(){const el=document.getElementById('nav-pending-count');if(el){if(this.pending.length>0){el.textContent=this.pending.length;el.style.display='inline'}else{el.style.display='none'}}},
+    setsCmdCount(h){let c=0;for(const sid of (h.command_sets||[])){const s=this.sets.find(x=>x.id===sid);if(s)c+=(s.commands||[]).length}return c},
+    getSetColor(sid){return this.sets.find(s=>s.id===sid)?.color||'#6366f1'},
+    getSetType(sid){return this.sets.find(s=>s.id===sid)?.type||'allow'},
+    _ws(){
+      const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/audit');
+      ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.ping)return;this.recent.unshift(d);if(this.recent.length>20)this.recent.pop();
+        d._new=true;setTimeout(()=>d._new=false,10000);if(d.status==='blocked')toast('Blocked: '+d.command,4000,'warn');
+        else if(d.status==='error')toast('Error: '+(d.error||d.command),4000,'err');
+      }
+    }
+  }
+}
+</script>{% endblock %}

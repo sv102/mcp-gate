@@ -1,0 +1,226 @@
+{% extends "base.html" %}{% set page = 'settings' %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>⚙ <span data-i18n="settings.title">Settings</span></h1>
+
+<!-- Instance Settings -->
+<div x-data="instApp()" x-init="load()" class="card">
+  <div class="flex-between">
+    <h2 style="margin-top:0" data-i18n-tip="settings.environment_tip" data-tip="Instance settings. File paths,&#10;URLs, parameters for migration." data-tip-down>🖥️ <span data-i18n="settings.environment">Environment & Paths</span></h2>
+    <button class="btn btn-sm" @click="testAll()" :disabled="testing"><span x-show="!testing" data-i18n="settings.test_paths">Test Paths</span><span x-show="testing" data-i18n="settings.testing">Testing...</span></button>
+  </div>
+  <div class="grid-2">
+    <div class="form-row"><label data-i18n="settings.app_url">Application URL</label>
+      <div style="display:flex;gap:6px;align-items:center"><input x-model="f.app_url" placeholder="https://mcp-gate.example.com" style="flex:1"><span x-show="checks.app_url!==undefined" x-text="checks.app_url?'✅':'❌'" style="font-size:16px"></span></div></div>
+    <div class="form-row"><label data-i18n="settings.traefik_config">Traefik Config Path</label>
+      <div style="display:flex;gap:6px;align-items:center"><input x-model="f.traefik_config_path" placeholder="/etc/traefik/dynamic/mcp-gate.yml" style="flex:1"><span x-show="checks.traefik_config_path!==undefined" x-text="checks.traefik_config_path?'✅':'❌'" style="font-size:16px"></span></div></div>
+    <div class="form-row"><label data-i18n="settings.basic_auth_user">BasicAuth User</label><input x-model="f.traefik_auth_user" placeholder="admin"></div>
+    <div class="form-row"><label data-i18n="settings.proxy_type">Reverse Proxy Type</label><select x-model="f.reverse_proxy_type"><option>traefik</option><option>nginx</option><option>caddy</option><option>none</option></select></div>
+    <div class="form-row"><label data-i18n="settings.ssh_default_user">Default SSH User</label><input x-model="f.ssh_default_user" placeholder="mcp-reader"></div>
+    <div class="form-row"><label data-i18n="settings.ssh_key_path">SSH Key Path</label>
+      <div style="display:flex;gap:6px;align-items:center"><input x-model="f.ssh_key_path" placeholder="/data/ssh_keys/mcp_ed25519" style="flex:1"><span x-show="checks.ssh_key_path!==undefined" x-text="checks.ssh_key_path?'✅':'❌'" style="font-size:16px"></span></div></div>
+    <div class="form-row"><label data-i18n="settings.ping_interval" data-i18n-tip="settings.ping_interval_tip" data-tip="Host availability check interval (sec)" data-tip-down>Ping Interval (sec)</label><input type="number" x-model.number="f.ping_interval" min="10" max="600"></div>
+    <div class="form-row"><label data-i18n="settings.max_audit">Max Audit Entries</label><input type="number" x-model.number="f.audit_max_entries" min="100"></div>
+    <div class="form-row"><label data-i18n="settings.compose_path">Compose Path</label>
+      <div style="display:flex;gap:6px;align-items:center"><input x-model="f.compose_path" placeholder="/opt/mcp-gate" style="flex:1"><span x-show="checks.compose_path!==undefined" x-text="checks.compose_path?'✅':'❌'" style="font-size:16px"></span></div></div>
+    <div class="form-row"><label data-i18n="settings.data_volume">Data Volume Path</label>
+      <div style="display:flex;gap:6px;align-items:center"><input x-model="f.data_volume_path" placeholder="/opt/_data/mcp-gate" style="flex:1"><span x-show="checks.data_volume_path!==undefined" x-text="checks.data_volume_path?'✅':'❌'" style="font-size:16px"></span></div></div>
+    <div class="form-row"><label data-i18n="settings.language">Language</label>
+      <select x-model="f.language" @change="saveLang()">
+        <template x-for="l in langs" :key="l"><option :value="l" :selected="l===f.language" x-text="langName(l)"></option></template>
+      </select>
+    </div>
+  </div>
+  <div class="flex mt-4">
+    <button class="btn btn-accent" @click="save()">💾 <span data-i18n="common.save">Save</span></button>
+    <button class="btn" @click="load()" data-i18n="common.cancel_changes">Cancel changes</button>
+  </div>
+</div>
+
+
+<!-- MCP Connection -->
+<div x-data="mcpApp()" x-init="load()" class="card">
+  <div class="flex-between">
+    <h2 style="margin-top:0">🔌 MCP Connection</h2>
+    <div class="flex" style="gap:4px">
+      <button class="btn btn-sm" @click="copyText(info.sse_url);toast('SSE URL copied',2000,'ok')">📋 Copy URL</button>
+      <button class="btn btn-red btn-sm" @click="revokeSessions()" x-show="info.active_sessions?.length">Revoke All</button>
+    </div>
+  </div>
+  <div class="grid-2 mt-2">
+    <div class="form-row">
+      <label>SSE URL (for MCP clients)</label>
+      <div class="flex"><input :value="info.sse_url" readonly style="flex:1;font-family:monospace;font-size:12px"></div>
+    </div>
+    <div class="form-row">
+      <label>MCP Token <span class="text-muted" style="font-weight:normal;font-size:11px">(from .env)</span></label>
+      <div class="flex">
+        <input :type="showToken?'text':'password'" :value="info.mcp_token" readonly style="flex:1;font-family:monospace;font-size:12px">
+        <button class="btn btn-sm" @click="showToken=!showToken" x-text="showToken?'🙈':'👁'" style="min-width:36px"></button>
+        <button class="btn btn-sm" @click="copyText(info.mcp_token);toast('Token copied',2000,'ok')">📋</button>
+      </div>
+    </div>
+  </div>
+  <div class="mt-4" style="font-size:12px;color:var(--text2)">
+    <b>How to connect:</b> In Claude.ai → Settings → Integrations → Add MCP Server → paste the SSE URL → on the OAuth page select an agent and enter the MCP Token.
+  </div>
+  <template x-if="info.active_sessions?.length">
+    <div class="mt-4">
+      <h3 style="font-size:14px;margin:0 0 8px">Active Sessions (<span x-text="info.active_sessions.length"></span>)</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <template x-for="s in info.active_sessions" :key="s.client_id">
+          <div style="font-size:12px;padding:6px 10px;background:var(--bg3);border-radius:6px;border:1px solid var(--border)">
+            <span style="font-weight:600" x-text="s.agent_id"></span>
+            <span class="text-muted" x-text="s.expires_in_days+'d left'"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+  <div x-show="!info.active_sessions?.length" class="mt-4 text-muted" style="font-size:12px">No active MCP sessions.</div>
+</div>
+
+<!-- Audit Settings -->
+<div x-data="auditApp()" x-init="load()" class="card">
+  <h2 style="margin-top:0">📋 <span data-i18n="settings.audit_log">Audit Log</span></h2>
+  <div class="grid-3 mt-2">
+    <div class="stat-card"><div class="stat-num text-cyan" x-text="info.entry_count"></div><div class="stat-label" data-i18n="settings.entries">Entries</div></div>
+    <div class="stat-card"><div class="stat-num" x-text="(info.file_size/1024).toFixed(1)+'KB'"></div><div class="stat-label" data-i18n="settings.size">Size</div></div>
+    <div class="stat-card"><div class="stat-num text-green" x-text="info.retention_days+'d'"></div><div class="stat-label" data-i18n="settings.retention">Retention</div></div>
+  </div>
+  <div class="grid-2 mt-4">
+    <div class="form-row"><label data-i18n="settings.retention_days">Retention (days)</label><input type="number" x-model.number="days" min="1" max="3650" style="width:120px"></div>
+    <div class="form-row" style="display:flex;align-items:flex-end;gap:8px">
+      <button class="btn btn-accent btn-sm" @click="saveDays()" data-i18n="common.save">Save</button>
+      <button class="btn btn-orange btn-sm" @click="applyNow()" data-i18n="settings.apply_now">Apply Now</button>
+    </div>
+  </div>
+  <div class="mt-4" style="border-top:1px solid var(--border);padding-top:12px">
+    <button class="btn btn-red" @click="clearAudit()">🗑️ <span data-i18n="settings.clear_audit">Clear Audit Log</span></button>
+  </div>
+</div>
+
+<!-- Backup -->
+<div x-data="backupApp()" class="card">
+  <h2 style="margin-top:0">💾 <span data-i18n="settings.backup">Backup & Restore</span></h2>
+  <div class="grid-2 mt-2">
+    <div>
+      <h2 style="font-size:14px;color:var(--green)" data-i18n="settings.export_title">Export</h2>
+      <p class="text-muted mt-1" style="font-size:12px" data-i18n="settings.export_desc">Hosts, sets, config (no secret values)</p>
+      <button class="btn btn-green mt-2" @click="doExport()">📥 <span data-i18n="settings.download_backup">Download backup</span></button>
+    </div>
+    <div>
+      <h2 style="font-size:14px;color:var(--orange)" data-i18n="settings.import_title">Import</h2>
+      <div class="flex mt-2">
+        <button class="btn btn-orange" @click="$refs.fi.click()">📤 <span data-i18n="settings.upload">Upload</span></button>
+        <input type="file" accept=".json" x-ref="fi" style="display:none" @change="doImport($event)">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Password change -->
+<div x-data="pwApp()" x-init="loadInst()" class="card">
+  <h2 style="margin-top:0">🔑 <span data-i18n="settings.change_password">Change BasicAuth Password</span></h2>
+  <div class="grid-2">
+    <div class="form-row"><label data-i18n="settings.new_password">New Password</label><input type="text" x-model="pw" placeholder="New password"></div>
+    <div class="form-row" style="display:flex;align-items:flex-end"><button class="btn btn-accent" @click="gen()" data-i18n="settings.generate">Generate</button></div>
+  </div>
+  <template x-if="hash">
+    <div class="mt-4" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px">
+      <label style="font-size:12px;color:var(--text2)" data-i18n="settings.htpasswd_label">htpasswd string:</label>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <pre x-text="hash" style="color:var(--yellow);word-break:break-all;flex:1;margin:0"></pre>
+        <button class="btn btn-sm" @click="copyText(hash)">📋</button>
+      </div>
+
+      <div class="mt-4">
+        <label style="font-size:12px;color:var(--text2)" data-i18n="settings.ssh_cmd_label">Full SSH command (copy and run):</label>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <pre x-text="sshCmd" style="color:var(--cyan);word-break:break-all;font-size:11px;flex:1;margin:0"></pre>
+          <button class="btn btn-sm" @click="copyText(sshCmd)">📋</button>
+        </div>
+      </div>
+
+      <div class="text-muted mt-4" style="font-size:12px" data-i18n="settings.traefik_note">
+        Traefik picks up changes automatically (~3 sec). Config path taken from environment settings.
+      </div>
+    </div>
+  </template>
+</div>
+
+<!-- Security -->
+<div class="card">
+  <h2 style="margin-top:0">🛡️ <span data-i18n="settings.security">Security</span></h2>
+  <table>
+    <tr><td class="text-muted" style="width:200px">LAN only</td><td><span class="badge badge-ok">IPAllowList</span></td></tr>
+    <tr><td class="text-muted">Rate limit</td><td><span class="badge badge-ok">Traefik</span></td></tr>
+    <tr><td class="text-muted">BasicAuth</td><td><span class="badge badge-warn">Basic</span></td></tr>
+    <tr><td class="text-muted">API key</td><td><span class="badge badge-ok">bcrypt</span></td></tr>
+    <tr><td class="text-muted">SSH key</td><td><span class="badge badge-ok">Ed25519</span></td></tr>
+    <tr><td class="text-muted">Secrets encryption</td><td><span class="badge badge-ok">Fernet</span></td></tr>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function instApp(){
+  const LN={en:'English',ru:'Russian'};
+  return{f:{},langs:[],checks:{},testing:false,
+    async load(){
+      this.f=await api('GET','/api/admin/instance');
+      this.checks={};
+      try{const r=await api('GET','/api/i18n');this.langs=r.languages||['en','ru']}catch(e){this.langs=['en','ru']}
+    },
+    langName(l){return LN[l]||l},
+    async save(){try{await api('PUT','/api/admin/instance',this.f);toast(T('common.saved'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async saveLang(){await this.save();location.reload()},
+    async testAll(){
+      this.testing=true;this.checks={};
+      /* URL validation */
+      try{new URL(this.f.app_url);this.checks.app_url=true}catch(e){this.checks.app_url=false}
+      /* Path checks via API */
+      const paths=['traefik_config_path','ssh_key_path','compose_path','data_volume_path'];
+      try{
+        const r=await api('POST','/api/admin/test-paths',{paths:paths.reduce((o,k)=>{o[k]=this.f[k];return o},{})});
+        for(const[k,v]of Object.entries(r.results||{})){this.checks[k]=v}
+      }catch(e){paths.forEach(k=>{this.checks[k]=null})}
+      this.testing=false;
+    }
+  }
+}
+function auditApp(){
+  return{info:{entry_count:0,file_size:0,retention_days:90},days:90,
+    async load(){try{const r=await api('GET','/api/admin/audit-settings');this.info=r;this.days=r.retention_days}catch(e){}},
+    async saveDays(){try{await api('PUT','/api/admin/audit-settings',{retention_days:this.days});this.info.retention_days=this.days;toast(T('common.saved'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async applyNow(){try{const r=await api('POST','/api/admin/audit/apply-retention');toast('Removed: '+r.removed,3000,'ok');await this.load()}catch(e){toast(e.message,4000,'err')}},
+    async clearAudit(){if(!confirm(T('settings.clear_confirm')))return;try{const r=await api('POST','/api/admin/audit/clear');toast('Cleared: '+r.deleted,3000,'ok');await this.load()}catch(e){toast(e.message,4000,'err')}}
+  }
+}
+function backupApp(){
+  return{
+    doExport(){window.open('/api/admin/backup','_blank')},
+    async doImport(ev){
+      const f=ev.target.files[0];if(!f)return;
+      try{const d=JSON.parse(await f.text());const r=await api('POST','/api/admin/restore',d);toast('Hosts: '+r.hosts+', sets: '+r.command_sets,4000,'ok')}catch(e){toast(e.message,5000,'err')}
+    }
+  }
+}
+function pwApp(){
+  return{pw:'',hash:'',inst:{},sshCmd:'',
+    async loadInst(){try{this.inst=await api('GET','/api/admin/instance')}catch(e){}},
+    async gen(){
+      if(!this.pw){toast(T('settings.new_password'),3000,'warn');return}
+      try{
+        const r=await api('POST','/api/admin/generate-htpasswd',{password:this.pw});
+        if(r.hash){
+          this.hash=r.hash;
+          const path=this.inst.traefik_config_path||'/etc/traefik/dynamic/mcp-gate.yml';
+          const escaped=this.hash.replace(/\$/g,'\\$$');
+          this.sshCmd=`sed -i 's|users:.*|users: "${escaped}"|' ${path}`;
+          toast(T('common.saved'),3000,'ok')
+        }else{toast(r.error||'Error',4000,'err')}
+      }catch(e){toast(e.message,4000,'err')}
+    }
+  }
+}
+</script>{% endblock %}

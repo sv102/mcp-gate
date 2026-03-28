@@ -1,0 +1,122 @@
+{% extends "base.html" %}{% set page = 'appearance' %}
+{% block title %}Appearance{% endblock %}
+{% block content %}
+<div x-data="appearApp()" x-init="load()">
+  <div class="flex-between mb-2">
+    <h1>🎨 <span x-data x-text="$store.i18n?.t('appearance.title')||'Appearance'"></span></h1>
+    <div class="flex"><button class="btn btn-sm" @click="resetDefaults()">Reset</button><button class="btn btn-accent btn-sm" @click="save()">💾 Save</button></div>
+  </div>
+  <div class="grid-2">
+    <div class="card"><h2 style="margin-top:0" data-i18n="appearance.colors">Colors</h2>
+      <template x-for="[key,label] in [['accent_color','Accent'],['bg_color','Background'],['card_bg','Cards'],['nav_bg','Navigation'],['text_color','Text']]" :key="key">
+        <div class="form-row"><label x-text="label"></label><div class="flex">
+          <input type="color" :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:44px;height:30px;padding:2px;cursor:pointer">
+          <input :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:90px;font-family:monospace;font-size:12px">
+        </div></div>
+      </template>
+    </div>
+    <div class="card"><h2 style="margin-top:0" data-i18n="appearance.buttons">Buttons</h2>
+      <template x-for="[key,label,cls] in [['btn_primary','Primary','btn-accent'],['btn_success','Success','btn-green'],['btn_danger','Danger','btn-red'],['btn_info','Info','btn-cyan'],['btn_warning','Warning','btn-orange']]" :key="key">
+        <div class="form-row"><label x-text="label"></label><div class="flex">
+          <input type="color" :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:44px;height:30px;padding:2px;cursor:pointer">
+          <input :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:90px;font-family:monospace;font-size:12px">
+          <button class="btn btn-sm" :class="cls">Sample</button>
+        </div></div>
+      </template>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card"><h2 style="margin-top:0" data-i18n="appearance.effects">Effects</h2>
+      <div class="form-row"><label>Glass blur (px): <span x-text="f.glass_blur"></span></label>
+        <input type="range" min="0" max="24" x-model.number="f.glass_blur" style="width:100%" @input="applyLive()"></div>
+      <div class="form-row"><label>Panel opacity: <span x-text="f.panel_opacity.toFixed(2)"></span></label>
+        <input type="range" min="0.3" max="1" step="0.05" x-model.number="f.panel_opacity" style="width:100%" @input="applyLive()"></div>
+    </div>
+    <div class="card"><h2 style="margin-top:0">Background</h2>
+      <div class="form-row">
+        <label class="flex" style="gap:8px;align-items:center;cursor:pointer">
+          <input type="checkbox" x-model="useBgImage" @change="toggleBgImage()">
+          <span x-data x-text="$store.i18n?.t('appearance.use_bg_image')||'Использовать фоновое изображение'"></span>
+        </label>
+      </div>
+      <div x-show="useBgImage && f.bg_image" class="mt-2">
+        <div class="text-muted" style="font-size:11px;margin-bottom:4px" x-text="f.bg_image"></div>
+        <div style="width:100%;height:60px;border-radius:6px;background-size:cover;background-position:center;border:1px solid var(--border)" :style="'background-image:url('+f.bg_image+')'"></div>
+      </div>
+      <div x-show="!useBgImage" class="text-muted mt-2" style="font-size:12px" x-data x-text="$store.i18n?.t('appearance.bg_color_only')||'Будет использован цвет фона вместо изображения.'"></div>
+    </div>
+  </div>
+  <div class="card"><h2 style="margin-top:0" data-i18n="appearance.themes">Themes</h2><div class="flex-wrap mt-2">
+    <template x-for="p in presets" :key="p.name"><button class="btn btn-sm" @click="applyPreset(p)">
+      <span style="width:14px;height:14px;border-radius:50%;border:1px solid var(--border);display:inline-block" :style="'background:'+p.accent_color"></span>
+      <span x-text="p.name"></span>
+    </button></template>
+  </div></div>
+  <div class="card"><h2 style="margin-top:0" data-i18n="appearance.preview">Preview</h2><div class="grid-3 mt-2">
+    <div><button class="btn btn-accent btn-sm">Primary</button> <button class="btn btn-green btn-sm">Success</button></div>
+    <div><button class="btn btn-red btn-sm">Danger</button> <button class="btn btn-cyan btn-sm">Info</button></div>
+    <div><span class="badge badge-ok">OK</span> <span class="badge badge-err">Err</span> <span class="badge badge-warn">Warn</span> <span class="badge badge-pending">Pend</span></div>
+  </div></div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function appearApp(){
+  const D={accent_color:'#6366f1',bg_color:'#0f1117',card_bg:'#1a1d27',nav_bg:'#1a1d27',text_color:'#e0e0e0',glass_blur:0,panel_opacity:1.0,nav_logo_icon:'🔐',btn_primary:'#4f52b8',btn_success:'#1a8a47',btn_danger:'#b83a3a',btn_info:'#0891a2',btn_warning:'#b47a10'};
+  return{
+    f:JSON.parse(JSON.stringify(D)),
+    useBgImage:true,
+    _savedBgImage:'',
+    presets:[
+      {name:'Standard',accent_color:'#6366f1',bg_color:'#0f1117',card_bg:'#1a1d27',nav_bg:'#1a1d27',text_color:'#e0e0e0',glass_blur:0,panel_opacity:1,btn_primary:'#4f52b8',btn_success:'#1a8a47',btn_danger:'#b83a3a',btn_info:'#0891a2',btn_warning:'#b47a10',nav_logo_icon:'🔐'},
+      {name:'SV-Projekt',accent_color:'#0e3e5c',bg_color:'#0a1929',card_bg:'#0f2233',nav_bg:'#0c1e30',text_color:'#c8d6e0',glass_blur:0,panel_opacity:1,btn_primary:'#0e3e5c',btn_success:'#1a6a3a',btn_danger:'#8b3030',btn_info:'#0e5e6c',btn_warning:'#8a6a10',nav_logo_icon:'🛡️'},
+      {name:'Glass',accent_color:'#818cf8',bg_color:'#0f1117',card_bg:'rgba(26,29,39,0.7)',nav_bg:'rgba(26,29,39,0.6)',text_color:'#e0e0e0',glass_blur:12,panel_opacity:0.85,btn_primary:'#5558c0',btn_success:'#1a7a42',btn_danger:'#a03838',btn_info:'#0880a0',btn_warning:'#9a7010',nav_logo_icon:'🔐'},
+      {name:'Emerald',accent_color:'#22c55e',bg_color:'#0f1a0f',card_bg:'#1a2d1a',nav_bg:'#1a2d1a',text_color:'#d0e8d0',glass_blur:0,panel_opacity:1,btn_primary:'#1a8a47',btn_success:'#1a8a47',btn_danger:'#8b3030',btn_info:'#0e6e5c',btn_warning:'#7a7a10',nav_logo_icon:'⚡'},
+      {name:'Cyberpunk',accent_color:'#ec4899',bg_color:'#0f0618',card_bg:'#1a0d28',nav_bg:'#1a0d28',text_color:'#e0d0f0',glass_blur:0,panel_opacity:1,btn_primary:'#b03878',btn_success:'#1a7a47',btn_danger:'#a02040',btn_info:'#6030b0',btn_warning:'#a06020',nav_logo_icon:'🌐'},
+    ],
+    toggleBgImage(){
+      if(this.useBgImage){
+        this.f.bg_image=this._savedBgImage||this.f.bg_image;
+      }else{
+        this._savedBgImage=this.f.bg_image;
+        this.f.bg_image='';
+      }
+      this.applyLive();
+    },
+    async load(){
+      try{
+        const r=await api('GET','/api/admin/appearance');
+        Object.keys(D).forEach(k=>{if(r[k]!==undefined)this.f[k]=r[k]});
+        if(r.bg_image!==undefined)this.f.bg_image=r.bg_image;
+        this.useBgImage=!!this.f.bg_image;
+        this._savedBgImage=this.f.bg_image||'';
+      }catch(e){}
+    },
+    async save(){
+      try{
+        await api('PUT','/api/admin/appearance',this.f);
+        toast('Saved',3000,'ok');
+      }catch(e){toast(e.message,4000,'err')}
+    },
+    resetDefaults(){this.f=JSON.parse(JSON.stringify(D));this.useBgImage=false;this.f.bg_image='';this.applyLive()},
+    applyPreset(p){Object.keys(p).forEach(k=>{if(k!=='name'&&this.f.hasOwnProperty(k))this.f[k]=p[k]});this.applyLive()},
+    applyLive(){
+      const r=document.documentElement.style;
+      r.setProperty('--bg',this.f.bg_color);
+      r.setProperty('--accent',this.f.accent_color);
+      r.setProperty('--accent2',this.f.accent_color+'cc');
+      r.setProperty('--card-bg',this.f.card_bg);
+      r.setProperty('--nav-bg',this.f.nav_bg);
+      r.setProperty('--text',this.f.text_color);
+      r.setProperty('--glass-blur',(this.f.glass_blur||0)+'px');
+      r.setProperty('--panel-opacity',this.f.panel_opacity);
+      for(const k of['btn_primary','btn_success','btn_danger','btn_info','btn_warning']){
+        r.setProperty('--'+k.replace(/_/g,'-'),this.f[k]);
+      }
+      document.body.style.backgroundImage=this.f.bg_image?'url('+this.f.bg_image+')':'none';
+      document.body.style.backgroundColor=this.f.bg_color;
+      if(this.f.favicon)document.getElementById('favicon').href=this.f.favicon;
+    },
+    async doUpload(ev,field){const f=ev.target.files[0];if(!f)return;try{this.f[field]=await uploadFile(f);this.applyLive();toast('Uploaded',3000,'ok')}catch(e){toast(e.message,4000,'err')}}
+  }
+}
+</script>{% endblock %}

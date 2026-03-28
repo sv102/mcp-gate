@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% set page = 'bootstrap' %}
+{% block title %}Setup{% endblock %}
+{% block content %}
+<h1 data-i18n="bootstrap.title">Setup</h1>
+<div x-data="{loading:false,result:null,done:{{ 'true' if done else 'false' }}}">
+  <template x-if="done">
+    <div class="card">
+      <p class="text-green">Setup already completed.</p>
+      <p class="mt-2 text-muted">To re-run — delete config.yaml and restart the container.</p>
+      <a href="/dashboard" class="btn btn-accent mt-4">Go to dashboard</a>
+    </div>
+  </template>
+  <template x-if="!done">
+    <div class="card">
+      <p>An SSH key pair and MCP API key will be generated.</p>
+      <p class="mt-2 text-muted">The API key is shown <b>once</b> — save it immediately.</p>
+      <button class="btn btn-accent mt-4" :disabled="loading" @click="loading=true;result=await api('POST','/api/admin/bootstrap',{generate_key:true});loading=false;if(result.api_key)done=true">
+        <span x-show="!loading">Run</span><span x-show="loading">Working...</span>
+      </button>
+      <template x-if="result&&result.api_key">
+        <div class="mt-4">
+          <div class="form-row"><label>MCP API key (save now!):</label><pre x-text="result.api_key" style="color:var(--yellow);font-size:14px"></pre></div>
+          <div class="form-row"><label>SSH public key:</label><pre x-text="result.public_key" style="font-size:11px;word-break:break-all"></pre></div>
+          <a href="/dashboard" class="btn btn-accent">Continue</a>
+        </div>
+      </template>
+    </div>
+  </template>
+</div>
+{% endblock %}

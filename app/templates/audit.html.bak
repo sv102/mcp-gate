@@ -1,0 +1,171 @@
+{% extends "base.html" %}{% set page = 'audit' %}
+{% block title %}Audit Log{% endblock %}
+{% block content %}
+<div x-data="auditApp()" x-init="init()">
+  <div class="flex-between mb-2">
+    <h1 data-i18n="audit.title">Audit Log</h1>
+    <div class="flex">
+      <label class="flex" style="gap:6px;font-size:13px" data-tip="Auto-update on new events" data-tip-left><input type="checkbox" x-model="live"> Live</label>
+      <button class="btn btn-sm" @click="copyAll()" data-tip="Copy visible entries to clipboard" data-tip-left>&#128203; Copy</button>
+      <button class="btn btn-sm" @click="exportFile('json')" data-tip="Download full log as JSON" data-tip-left>&#128229; JSON</button>
+      <button class="btn btn-sm" @click="exportFile('csv')" data-tip="Download full log as CSV" data-tip-left>&#128229; CSV</button>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card" style="padding:12px">
+    <div class="flex-wrap" style="gap:12px">
+      <div>
+        <label style="font-size:11px;color:var(--text2)">Host</label>
+        <select x-model="f.host_id" @change="load()" style="font-size:12px;width:130px">
+          <option value="">All</option>
+          <template x-for="h in hostsList" :key="h"><option :value="h" x-text="h"></option></template>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2)">Status</label>
+        <select x-model="f.status" @change="load()" style="font-size:12px;width:120px">
+          <option value="">All</option>
+          <option value="ok">OK</option>
+          <option value="blocked">Blocked</option>
+          <option value="error">Error</option>
+          <option value="pending">Pending</option>
+          <option value="rejected">Rejected</option>
+          <option value="dry_run">Dry run</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2)">Source</label>
+        <select x-model="f.source" @change="load()" style="font-size:12px;width:130px">
+          <option value="">All</option>
+          <option value="mcp">MCP</option>
+          <option value="admin_console">Console</option>
+          <option value="manual_approve">Approval</option>
+          <option value="manual_reject">Rejection</option>
+          <option value="auto_approve">Auto-approve</option>
+          <option value="auto_reject">Auto-reject</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2)">Group</label>
+        <select x-model="f.group" @change="load()" style="font-size:12px;width:120px">
+          <option value="">All</option>
+          <template x-for="g in groupsList" :key="g"><option :value="g" x-text="g"></option></template>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2)">From</label>
+        <input type="datetime-local" x-model="f.dateFrom" @change="load()" style="font-size:12px;width:180px">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2)">To</label>
+        <input type="datetime-local" x-model="f.dateTo" @change="load()" style="font-size:12px;width:180px">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--text2)">Entries</label>
+        <select x-model.number="f.limit" @change="load()" style="font-size:12px;width:80px">
+          <option value="50">50</option><option value="100">100</option><option value="200">200</option><option value="500">500</option><option value="1000">1000</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button class="btn btn-sm" @click="resetFilters()" data-tip="Reset all filters">&#10060; Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results count -->
+  <div class="flex-between mb-2" style="font-size:12px">
+    <span class="text-muted">Shown: <b x-text="entries.length"></b> entries</span>
+    <span class="text-muted" x-show="f.host_id||f.status||f.source||f.group||f.dateFrom||f.dateTo">Filters active</span>
+  </div>
+
+  <!-- Table -->
+  <div class="card" style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th style="width:160px">Time</th>
+        <th>Host</th>
+        <th>Command</th>
+        <th>Source</th>
+        <th>Status</th>
+        <th>Duration</th>
+        <th>Details</th>
+      </tr></thead>
+      <tbody>
+        <template x-for="e in entries" :key="e.id||e.ts">
+          <tr>
+            <td class="text-muted" style="font-size:11px;white-space:nowrap"><span x-text="ts(e.ts)"></span><span x-show="isNewEvent(e.ts)" class="badge-new" x-init="setTimeout(()=>{if($el)$el.classList.add(\'fade-out\')},8000)">NEW</span></td>
+            <td><code x-text="e.host_id||'-'"></code></td>
+            <td><code x-text="e.command||'-'" style="max-width:250px;display:inline-block;overflow:hidden;text-overflow:ellipsis;cursor:pointer" @click="copyText(e.command)" data-tip="Click to copy"></code></td>
+            <td style="font-size:12px" x-text="e.source||'-'"></td>
+            <td x-html="badge(e.status||'?')"></td>
+            <td x-text="e.duration_ms?e.duration_ms+'ms':'—'" style="font-size:12px"></td>
+            <td class="text-muted" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;cursor:pointer" x-text="e.reason||e.error||e.approval_id||''" @click="showDetail(e)" data-tip="Click for details"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+    <div x-show="entries.length===0" class="text-muted" style="text-align:center;padding:24px;font-size:13px">
+      No entries matching selected filters.
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <template x-if="detail">
+    <div class="overlay" @click.self="detail=null">
+      <div class="modal" style="position:relative;max-width:600px">
+        <button class="modal-close" @click="detail=null">&times;</button>
+        <h2>Entry Details</h2>
+        <pre style="font-size:12px;max-height:60vh;overflow:auto;white-space:pre-wrap" x-text="JSON.stringify(detail,null,2)"></pre>
+        <div class="flex mt-4">
+          <button class="btn btn-sm" @click="copyText(JSON.stringify(detail,null,2))">Copy JSON</button>
+          <button class="btn btn-sm" @click="detail=null">Close</button>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function auditApp(){
+  return{
+    entries:[],live:true,detail:null,hostsList:[],groupsList:[],
+    f:{host_id:'',status:'',source:'',group:'',dateFrom:'',dateTo:'',limit:200},
+    async init(){
+      await this.load();
+      // Build filter lists from hosts
+      try{
+        const hosts=await api('GET','/api/admin/hosts');
+        this.hostsList=[...new Set(hosts.map(h=>h.id))];
+        this.groupsList=[...new Set(hosts.map(h=>h.group).filter(Boolean))];
+      }catch(e){}
+      this._ws();
+    },
+    async load(){
+      const p=new URLSearchParams();
+      p.set('limit',this.f.limit);
+      if(this.f.host_id)p.set('host_id',this.f.host_id);
+      if(this.f.status)p.set('status',this.f.status);
+      if(this.f.source)p.set('source',this.f.source);
+      if(this.f.group)p.set('group',this.f.group);
+      if(this.f.dateFrom)p.set('ts_from',new Date(this.f.dateFrom).getTime()/1000);
+      if(this.f.dateTo)p.set('ts_to',new Date(this.f.dateTo).getTime()/1000);
+      this.entries=await api('GET','/api/admin/audit?'+p.toString());
+    },
+    resetFilters(){this.f={host_id:'',status:'',source:'',group:'',dateFrom:'',dateTo:'',limit:200};this.load()},
+    showDetail(e){this.detail=e},
+    copyAll(){
+      const text=this.entries.map(e=>[ts(e.ts),e.host_id,e.command,e.source,e.status,e.duration_ms?e.duration_ms+'ms':'',e.reason||e.error||''].join('\t')).join('\n');
+      navigator.clipboard.writeText(text);toast('Copied '+this.entries.length+' entries',3000,'ok');
+    },
+    exportFile(fmt){window.open('/api/admin/audit/export?fmt='+fmt,'_blank')},
+    _ws(){
+      const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/audit');
+      ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.ping||!this.live)return;this.entries.unshift(d);if(this.entries.length>1000)this.entries.pop();
+        if(d.status==='blocked')toast('Blocked: '+d.command,4000,'warn');
+        else if(d.status==='error')toast('SSH Error: '+(d.error||d.command),4000,'err');
+      }
+    }
+  }
+}
+</script>{% endblock %}

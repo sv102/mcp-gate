@@ -1,0 +1,134 @@
+{% extends "base.html" %}{% set page = 'alerts' %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<h1 data-i18n="alerts.title">Notifications</h1>
+
+
+<!-- Browser Notifications -->
+<div x-data="browserNotifApp()" x-init="init()" class="card">
+  <h2 style="margin-top:0" data-i18n="alerts.browser">Browser Notifications</h2>
+  <p class="text-muted mb-4" style="font-size:12px" data-i18n="alerts.browser_desc">Native browser notifications when tab is not focused. Sound plays on every toast.</p>
+  <div class="grid-2">
+    <div>
+      <div class="form-row">
+        <label><span data-i18n="alerts.browser_status">Permission</span>:</label>
+        <span class="badge" :class="perm==='granted'?'badge-ok':perm==='denied'?'badge-err':'badge-warn'" x-text="perm"></span>
+      </div>
+      <template x-if="perm==='default'">
+        <button class="btn btn-accent btn-sm mt-2" @click="requestPerm()" data-i18n="alerts.browser_enable">Enable browser notifications</button>
+      </template>
+      <template x-if="perm==='denied'">
+        <p class="text-muted mt-2" style="font-size:12px" data-i18n="alerts.browser_denied">Notifications blocked. Enable in browser settings: click lock icon → Notifications → Allow</p>
+      </template>
+      <template x-if="perm==='granted'">
+        <div class="mt-2">
+          <span class="badge badge-ok">✓</span>
+          <button class="btn btn-sm" style="margin-left:8px" @click="testNotif()" data-i18n="alerts.browser_test">Send test</button>
+        </div>
+      </template>
+    </div>
+    <div>
+      <div class="form-row">
+        <label><span data-i18n="alerts.sound_status">Sound</span>:</label>
+        <span class="badge" :class="soundOk?'badge-ok':'badge-warn'" x-text="soundOk?'✓ active':'click to activate'"></span>
+      </div>
+      <p class="text-muted mt-2" style="font-size:12px" data-i18n="alerts.sound_desc">Sounds play on every toast. AudioContext requires a user click to activate.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Telegram -->
+<div x-data="tgApp()" x-init="load()" class="card">
+  <h2 style="margin-top:0" data-tip="Telegram notifications via bot.&#10;Create a bot via @BotFather,&#10;get chat_id via @userinfobot" data-tip-down>Telegram</h2>
+  <div class="form-row"><label><input type="checkbox" x-model="f.enabled"> Enable</label></div>
+  <div class="grid-2">
+    <div class="form-row"><label data-tip="Bot token from @BotFather.&#10;Format: 123456789:ABCdef..." data-tip-down>Bot Token</label><input x-model="f.bot_token" placeholder="123456:ABC..."></div>
+    <div class="form-row"><label data-tip="Chat or group ID.&#10;Personal: numeric ID&#10;Groups: with minus, e.g. -100123..." data-tip-down>Chat ID</label><input x-model="f.chat_id" placeholder="-100123..."></div>
+  </div>
+  <div class="grid-3">
+    <div class="form-row"><label><input type="checkbox" x-model="f.notify_blocked"> ⛔ Blocked events</label></div>
+    <div class="form-row"><label><input type="checkbox" x-model="f.notify_errors"> ❌ SSH errors</label></div>
+    <div class="form-row"><label><input type="checkbox" x-model="f.notify_approvals"> ⏳ Approval requests</label></div>
+  </div>
+  <div class="form-row"><label data-tip="Minimum interval between notifications&#10;of the same type (seconds). Spam protection." data-tip-down>Cooldown (sec)</label><input type="number" x-model.number="f.cooldown_seconds" style="width:120px"></div>
+  <div class="flex mt-4">
+    <button class="btn btn-accent" @click="save()">Save</button>
+    <button class="btn" @click="test()">📨 Send test</button>
+  </div>
+</div>
+
+<!-- Email -->
+<div x-data="smtpApp()" x-init="load()" class="card">
+  <h2 style="margin-top:0" data-tip="Email notifications via SMTP.&#10;TLS (STARTTLS) supported." data-tip-down>Email (SMTP)</h2>
+  <div class="form-row"><label><input type="checkbox" x-model="f.enabled"> Enable</label></div>
+  <div class="grid-2">
+    <div class="form-row"><label data-tip="SMTP server address" data-tip-down>SMTP Server</label><input x-model="f.host" placeholder="smtp.gmail.com"></div>
+    <div class="form-row"><label>Port</label><input type="number" x-model.number="f.port"></div>
+    <div class="form-row"><label>Login</label><input x-model="f.user" placeholder="user@gmail.com"></div>
+    <div class="form-row"><label>Password</label><input type="password" x-model="f.password"></div>
+    <div class="form-row"><label>From</label><input x-model="f.from_addr" placeholder="mcp@example.com"></div>
+    <div class="form-row"><label>To</label><input x-model="f.to_addr" placeholder="admin@example.com"></div>
+  </div>
+  <div class="form-row"><label><input type="checkbox" x-model="f.use_tls"> TLS (STARTTLS)</label></div>
+  <div class="grid-3">
+    <div class="form-row"><label><input type="checkbox" x-model="f.notify_blocked"> ⛔ Blocked events</label></div>
+    <div class="form-row"><label><input type="checkbox" x-model="f.notify_errors"> ❌ Errors</label></div>
+    <div class="form-row"><label><input type="checkbox" x-model="f.notify_approvals"> ⏳ Approval requests</label></div>
+  </div>
+  <div class="flex mt-4">
+    <button class="btn btn-accent" @click="save()">Save</button>
+    <button class="btn" @click="test()">📨 Send test</button>
+  </div>
+</div>
+
+<!-- Notification Templates -->
+<div x-data="templApp()" x-init="load()" class="card">
+  <h2 style="margin-top:0" data-tip="Notification text templates.&#10;Variables: {host_id}, {command}, {reason},&#10;{error}, {mode}, {time}, {duration}, {url}" data-tip-down>Notification Templates</h2>
+  <p class="text-muted mb-4" style="font-size:12px">Available variables: <code>{host_id}</code> <code>{command}</code> <code>{reason}</code> <code>{error}</code> <code>{mode}</code> <code>{time}</code> <code>{duration}</code> <code>{url}</code></p>
+
+  <template x-for="(key,label) in [['blocked','⛔ Blocked'],['error','❌ Error'],['approval','⏳ Approval'],['ok','✅ Success']]" :key="key">
+    <div class="card" style="padding:12px;margin-bottom:8px;border-color:var(--bg3)">
+      <b style="font-size:13px" x-text="label"></b>
+      <div class="grid-2 mt-2">
+        <div class="form-row"><label>Subject</label><input x-model="t[key].subject"></div>
+        <div></div>
+      </div>
+      <div class="form-row"><label>Body</label><textarea x-model="t[key].body" rows="3" style="font-family:monospace;font-size:12px"></textarea></div>
+    </div>
+  </template>
+
+  <div class="flex mt-4">
+    <button class="btn btn-accent" @click="save()">Save templates</button>
+    <button class="btn" @click="resetDefaults()">Reset to defaults</button>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function tgApp(){return{f:{enabled:false,bot_token:'',chat_id:'',notify_blocked:true,notify_errors:true,notify_approvals:true,cooldown_seconds:300},
+  async load(){try{Object.assign(this.f,await api('GET','/api/admin/telegram'))}catch(e){}},
+  async save(){try{await api('PUT','/api/admin/telegram',this.f);toast(T('common.saved'),3000,'ok')}catch(e){toast('Error: '+e.message,4000,'err')}},
+  async test(){try{const r=await api('POST','/api/admin/telegram/test?token='+encodeURIComponent(this.f.bot_token)+'&chat_id='+encodeURIComponent(this.f.chat_id));toast(r.ok?'Test sent':'Error: '+(r.error||'?'),4000,r.ok?'ok':'err')}catch(e){toast('Error: '+e.message,4000,'err')}}
+}}
+function smtpApp(){return{f:{enabled:false,host:'',port:587,user:'',password:'',from_addr:'',to_addr:'',use_tls:true,notify_blocked:true,notify_errors:true,notify_approvals:true},
+  async load(){try{Object.assign(this.f,await api('GET','/api/admin/smtp'))}catch(e){}},
+  async save(){try{await api('PUT','/api/admin/smtp',this.f);toast(T('common.saved'),3000,'ok')}catch(e){toast('Error: '+e.message,4000,'err')}},
+  async test(){try{const r=await api('POST','/api/admin/smtp/test');toast(r.ok?'Test sent':'Error: '+(r.error||'?'),4000,r.ok?'ok':'err')}catch(e){toast('Error: '+e.message,4000,'err')}}
+}}
+function templApp(){
+  const DEF={blocked:{subject:'⛔ MCP Gate — command blocked',body:'Host: {host_id}\nCommand: {command}\nReason: {reason}\nTime: {time}'},error:{subject:'❌ MCP Gate — SSH error',body:'Host: {host_id}\nCommand: {command}\nError: {error}\nTime: {time}'},approval:{subject:'⏳ MCP Gate — approval required',body:'Host: {host_id}\nCommand: {command}\nMode: {mode}\nTime: {time}\n\nApprove in UI: {url}'},ok:{subject:'✅ MCP Gate — command executed',body:'Host: {host_id}\nCommand: {command}\nDuration: {duration}ms\nTime: {time}'}};
+  return{
+    t:JSON.parse(JSON.stringify(DEF)),
+    async load(){try{const r=await api('GET','/api/admin/notification-templates');Object.assign(this.t,r)}catch(e){}},
+    async save(){try{await api('PUT','/api/admin/notification-templates',this.t);toast(T('common.saved'),3000,'ok')}catch(e){toast('Error: '+e.message,4000,'err')}},
+    resetDefaults(){this.t=JSON.parse(JSON.stringify(DEF));toast('Templates reset (save to apply)',3000,'info')}
+  }
+}
+
+function browserNotifApp(){return{
+  perm:'Notification' in window?Notification.permission:'unsupported',
+  soundOk:false,
+  init(){setInterval(()=>{try{const ac=typeof _getAC==='function'?_getAC():null;this.soundOk=!!(ac&&ac.state==='running')}catch(e){this.soundOk=false}},2000)},
+  requestPerm(){if('Notification' in window)Notification.requestPermission().then(p=>{this.perm=p;if(p==='granted')toast('Notifications enabled!',3000,'ok')})},
+  testNotif(){try{new Notification('MCP Gate',{body:'Test notification — everything works!',icon:'/static/favicon.png'})}catch(e){toast('Error: '+e.message,3000,'err')}}
+}}
+</script>{% endblock %}

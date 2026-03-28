@@ -1,0 +1,207 @@
+{% extends "base.html" %}{% set page = 'guide' %}
+{% block title %}Guide{% endblock %}
+{% block content %}
+<h1 data-i18n="guide.title">📖 Guide</h1>
+
+<div class="card">
+  <h2 style="margin-top:0" data-i18n="guide.what_is">What is MCP Gate?</h2>
+  <p style="font-size:14px;line-height:1.8">
+    <b>MCP Gate</b> — open-source gateway для безопасного доступа AI-агентов (LLM) к вашей инфраструктуре через SSH.
+  </p>
+  <p style="font-size:13px;line-height:1.7;margin-top:12px;color:var(--text2)">
+    Когда вы подключаете AI-агент (Claude, ChatGPT, Cursor и др.) к вашим серверам, возникает критический вопрос безопасности: какие команды агент может выполнять, а какие — нет. MCP Gate решает эту задачу, выступая единой точкой контроля между агентами и серверами.
+  </p>
+  <div class="grid-3 mt-4">
+    <div class="stat-card" style="text-align:left;padding:16px">
+      <div style="font-size:24px;margin-bottom:8px">🛡️</div>
+      <b style="font-size:13px">Whitelist-контроль</b>
+      <p class="text-muted mt-2" style="font-size:12px">Только явно разрешённые команды могут быть выполнены. Параметризованные команды с regex-валидацией.</p>
+    </div>
+    <div class="stat-card" style="text-align:left;padding:16px">
+      <div style="font-size:24px;margin-bottom:8px">🔑</div>
+      <b style="font-size:13px">Хранилище ключей</b>
+      <p class="text-muted mt-2" style="font-size:12px">Fernet-шифрование API-ключей и токенов. Подстановка <code>$SECRET{id}</code> server-side. Автоматическая очистка ответов.</p>
+    </div>
+    <div class="stat-card" style="text-align:left;padding:16px">
+      <div style="font-size:24px;margin-bottom:8px">⏳</div>
+      <b style="font-size:13px">Workflow подтверждений</b>
+      <p class="text-muted mt-2" style="font-size:12px">4 режима: auto, pessimistic, optimistic, strict. Уведомления в Telegram/Email. Обратный отсчёт.</p>
+    </div>
+  </div>
+  <div class="grid-3 mt-2">
+    <div class="stat-card" style="text-align:left;padding:16px">
+      <div style="font-size:24px;margin-bottom:8px">🤖</div>
+      <b style="font-size:13px">Мультиагентность</b>
+      <p class="text-muted mt-2" style="font-size:12px">Отдельный API-ключ для каждого агента. Ограничение по хостам. Rate limiting. Полный аудит по агентам.</p>
+    </div>
+    <div class="stat-card" style="text-align:left;padding:16px">
+      <div style="font-size:24px;margin-bottom:8px">📦</div>
+      <b style="font-size:13px">Наборы команд</b>
+      <p class="text-muted mt-2" style="font-size:12px">Группировка команд в переиспользуемые наборы. Allow и deny типы. Привязка к хостам и агентам.</p>
+    </div>
+    <div class="stat-card" style="text-align:left;padding:16px">
+      <div style="font-size:24px;margin-bottom:8px">📋</div>
+      <b style="font-size:13px">Полный аудит</b>
+      <p class="text-muted mt-2" style="font-size:12px">Каждый запрос логируется: хост, команда, агент, статус, длительность. Retention, экспорт CSV/JSON.</p>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">🏗 Архитектура</h2>
+  <pre style="font-size:12px">
+AI Agent (Claude / Cursor / ChatGPT / Open WebUI)
+       │
+       ▼ HTTPS + API Key
+┌──────────────────────────────────────────────┐
+│                 MCP Gate                     │
+│                                              │
+│  Agent auth ─► Command authorization        │
+│                │                             │
+│      host_allow ∩ agent_allow               │
+│      (если у агента есть allow-наборы)       │
+│                │                             │
+│      - (host_deny ∪ agent_deny)             │
+│                │                             │
+│         $SECRET{id} substitution            │
+│                │                             │
+│         Approval workflow                   │
+│                │                             │
+│         SSH exec → Scrub output             │
+└──────────┬───────────────────────────────────┘
+           │ SSH (Ed25519)
+    ┌──────┼──────┐
+    ▼      ▼      ▼
+  Host1  Host2  Host3
+  </pre>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">📦 Наборы команд: Allow и Deny</h2>
+  <p style="font-size:13px;line-height:1.7;color:var(--text2)">
+    Наборы команд бывают двух типов. Они привязываются к хостам и к агентам, что позволяет гибко управлять правами доступа.
+  </p>
+
+  <div class="grid-2 mt-4">
+    <div class="stat-card" style="text-align:left;padding:16px;border-left:3px solid var(--accent)">
+      <div style="font-size:18px;margin-bottom:8px">✓ <b>Allow-набор</b></div>
+      <p class="text-muted" style="font-size:12px;line-height:1.7">Список разрешённых SSH-команд. Произвольный цвет тега. Может содержать параметризованные команды с <code>{name}</code> плейсхолдерами.</p>
+      <div style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:11px">
+        <div class="text-muted">Пример команд:</div>
+        <code>uptime</code><br>
+        <code>df -h</code><br>
+        <code>systemctl status {service}</code>
+      </div>
+    </div>
+    <div class="stat-card" style="text-align:left;padding:16px;border-left:3px solid #7f1d1d">
+      <div style="font-size:18px;margin-bottom:8px" style="color:#fca5a5">✕ <b>Deny-набор</b></div>
+      <p class="text-muted" style="font-size:12px;line-height:1.7">Список заблокированных команд. Всегда тёмно-бордовый. <b>Наивысший приоритет</b> — deny всегда побеждает allow.</p>
+      <div style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:11px">
+        <div class="text-muted">Пример команд:</div>
+        <code>rm -rf *</code><br>
+        <code>shutdown</code><br>
+        <code>reboot</code>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-size:14px;margin:20px 0 8px">Логика авторизации (INTERSECTION + DENY)</h3>
+  <pre style="font-size:12px;line-height:1.8">
+1. host_allow  = UNION команд всех allow-наборов хоста (enabled)
+2. host_deny   = UNION команд всех deny-наборов хоста (enabled)
+3. agent_allow = UNION команд всех allow-наборов агента (enabled)
+4. agent_deny  = UNION команд всех deny-наборов агента (enabled)
+
+5. effective_allow = host_allow ∩ agent_allow   ← если у агента ЕСТЬ allow-наборы
+                   = host_allow                  ← если у агента НЕТ allow-наборов
+6. effective_deny  = host_deny ∪ agent_deny
+
+7. final = effective_allow − effective_deny
+
+Команда выполняется ⟺ она входит в final
+  </pre>
+
+  <h3 style="font-size:14px;margin:16px 0 8px">Примеры сценариев</h3>
+  <table>
+    <tr>
+      <th style="text-align:left;padding:6px 12px 6px 0">Сценарий</th>
+      <th style="text-align:left;padding:6px 12px">Результат</th>
+    </tr>
+    <tr>
+      <td style="padding:6px 12px 6px 0;font-size:13px">У агента нет наборов, у хоста allow-набор с 20 командами</td>
+      <td style="padding:6px 12px;font-size:13px">Агент может выполнять все 20 команд хоста</td>
+    </tr>
+    <tr style="background:var(--bg3)">
+      <td style="padding:6px 12px 6px 0;font-size:13px">У агента allow-набор с 5 командами, у хоста — с 20</td>
+      <td style="padding:6px 12px;font-size:13px">Агент может выполнять только 5 команд (пересечение)</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 12px 6px 0;font-size:13px">У хоста deny-набор с <code>reboot</code>, у агента нет ограничений</td>
+      <td style="padding:6px 12px;font-size:13px"><code>reboot</code> заблокирована для всех агентов на этом хосте</td>
+    </tr>
+    <tr style="background:var(--bg3)">
+      <td style="padding:6px 12px 6px 0;font-size:13px">У агента deny-набор с <code>rm -rf *</code></td>
+      <td style="padding:6px 12px;font-size:13px"><code>rm -rf *</code> заблокирована для этого агента на всех хостах</td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">🚀 Быстрый старт</h2>
+  <ol style="font-size:14px;line-height:2.2;padding-left:20px">
+    <li><b>Bootstrap</b> — при первом запуске генерируется SSH-ключ и MCP API ключ</li>
+    <li><b>Добавить хост</b> — IP/hostname, SSH user, порт</li>
+    <li><b>Скопировать SSH-ключ</b> на целевой сервер в <code>~/.ssh/authorized_keys</code></li>
+    <li><b>Создать allow-набор команд</b> — whitelist разрешённых SSH-команд</li>
+    <li><b>Привязать набор к хосту</b></li>
+    <li><b>Зарегистрировать агента</b> — выбрать тип (Claude, Cursor и др.), сгенерировать API ключ</li>
+    <li><b>Привязать наборы к агенту</b> (опционально — для ограничения прав агента)</li>
+    <li><b>Подключить агента</b> — использовать инструкции из карточки агента</li>
+    <li><b>Тестировать</b> — Console в UI или прямые API-вызовы</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">🔗 Подключение AI-агентов</h2>
+
+  <h3 style="font-size:14px;margin:16px 0 8px">MCP-совместимые клиенты (Claude, Cursor, Windsurf, Continue, Cline)</h3>
+  <p class="text-muted mb-2" style="font-size:13px">Эти клиенты подключаются через MCP-сервер, который вызывает MCP Gate API. MCP Gate не является MCP-сервером напрямую — он выступает backend для вашего MCP-сервера.</p>
+  <pre>// Пример вызова из MCP-сервера (ssh_exec tool)
+POST https://your-gate-url:8090/api/exec
+Headers: X-API-Key: &lt;agent-api-key&gt;
+Body: {"host_id": "pve1", "command": "uptime", "source": "mcp"}</pre>
+
+  <h3 style="font-size:14px;margin:16px 0 8px">REST API клиенты (ChatGPT Actions, Open WebUI, custom)</h3>
+  <pre>// Список доступных хостов и команд
+GET /api/hosts
+
+// Выполнить команду
+POST /api/exec
+{"host_id": "pve1", "command": "uptime", "source": "api"}
+
+// С параметрами
+POST /api/exec
+{"host_id": "rag-vm", "command": "curl -s http://grafana:3000/{path}",
+ "args": {"path": "api/search"}, "source": "api"}</pre>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">🔐 Модель безопасности</h2>
+  <table>
+    <tr><td class="text-muted" style="width:220px">Аутентификация</td><td>Per-agent API key (Fernet), BasicAuth для WebUI</td></tr>
+    <tr><td class="text-muted">Авторизация</td><td>INTERSECTION allow-наборов − UNION deny-наборов</td></tr>
+    <tr><td class="text-muted">Секреты</td><td>Fernet-шифрование, <code>$SECRET{id}</code> подстановка, scrub output</td></tr>
+    <tr><td class="text-muted">Параметризация</td><td>Regex-валидация, shell-опасные символы заблокированы по умолчанию</td></tr>
+    <tr><td class="text-muted">Подтверждения</td><td>auto / pessimistic / optimistic / strict (per-host, per-command)</td></tr>
+    <tr><td class="text-muted">Аудит</td><td>Каждый запрос: хост, команда, агент, статус, время, длительность</td></tr>
+    <tr><td class="text-muted">Rate limiting</td><td>Per-host и per-agent лимит запросов/мин</td></tr>
+    <tr><td class="text-muted">Сеть</td><td>LAN-only рекомендуется, Traefik + TLS для внешнего доступа</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">⚙ Версия</h2>
+  <p>MCP Gate <code>v{{ version }}</code> — <a href="/about">Changelog</a></p>
+  <p class="text-muted" style="font-size:12px">GitHub: <a href="https://github.com/sv102/mcp-gate" target="_blank">sv102/mcp-gate</a></p>
+</div>
+{% endblock %}

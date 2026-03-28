@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% set page = 'console' %}
+{% block title %}Console{% endblock %}
+{% block content %}
+<h1 data-i18n="console.title">Console</h1>
+<div x-data="C()">
+  <div class="card"><div class="grid-2">
+    <div class="form-row"><label>Host</label><select x-model="hid" @change="upd()"><option value="">Select...</option><template x-for="h in hosts" :key="h.id"><option :value="h.id" x-text="h.name+' ('+h.id+')'"></option></template></select></div>
+    <div class="form-row"><label>Command</label><select x-model="cmd"><option value="">Select...</option><template x-for="c in cmds" :key="c.cmd"><option :value="c.cmd" x-text="c.cmd+(c.description?' - '+c.description:'')"></option></template></select></div>
+  </div><button class="btn btn-accent mt-2" :disabled="!hid||!cmd||run" @click="exec()"><span x-show="!run">Execute</span><span x-show="run">Executing...</span></button></div>
+  <template x-if="res">
+    <div class="card">
+      <div class="flex-between mb-2"><span>Result: <span x-html="badge(res.status)"></span></span><span class="text-muted" x-show="res.duration_ms" x-text="res.duration_ms+'ms'"></span></div>
+      <template x-if="res.output"><pre x-text="res.output"></pre></template>
+      <template x-if="res.stderr"><pre class="text-red" x-text="res.stderr"></pre></template>
+      <template x-if="res.error"><pre class="text-red" x-text="res.error"></pre></template>
+      <template x-if="res.reason"><p class="text-red" x-text="res.reason"></p></template>
+      <template x-if="res.approval_id"><p class="text-yellow mt-2">Pending: <code x-text="res.approval_id"></code></p></template>
+    </div>
+  </template>
+  <div class="card" x-show="hist.length"><h2>History</h2>
+    <template x-for="(h,i) in hist" :key="i"><div style="border-bottom:1px solid var(--border);padding:6px 0;font-size:12px" class="flex-between"><span><code x-text="h.host"></code> - <code x-text="h.cmd"></code></span><div class="flex"><span x-html="badge(h.st)"></span><button class="btn btn-sm" @click="hid=h.host;cmd=h.cmd;exec()">&#8635;</button></div></div></template>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function C(){return{hosts:{{ hosts|tojson }},hid:'',cmd:'',cmds:[],res:null,run:false,hist:[],
+  upd(){const h=this.hosts.find(x=>x.id===this.hid);this.cmds=h?(h.whitelist||[]):[];this.cmd=''},
+  async exec(){this.run=true;this.res=null;const r=await fetch('/api/admin/exec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host_id:this.hid,command:this.cmd,source:'console'})});this.res=await r.json();this.hist.unshift({host:this.hid,cmd:this.cmd,st:this.res.status});if(this.hist.length>20)this.hist.pop();this.run=false}
+}}
+</script>{% endblock %}
