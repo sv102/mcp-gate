@@ -1,0 +1,78 @@
+# Example: command_sets.yaml
+# Reusable groups of commands that attach to hosts and agents via tags.
+# Two types: "allow" (whitelist) and "deny" (blacklist, highest priority).
+#
+# Authorization formula:
+#   effective = (host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)
+
+- id: system-basic
+  name: "System: basics"
+  description: Uptime, disk, memory, OS info
+  type: allow
+  color: "#6b7280"
+  enabled: true
+  commands:
+    - cmd: free -h
+      description: Memory usage
+    - cmd: uptime
+      description: System uptime
+    - cmd: df -h
+      description: Disk space
+    - cmd: cat /etc/hostname
+      description: Hostname
+    - cmd: uname -a
+      description: Kernel info
+    - cmd: cat /etc/os-release
+      description: OS version
+
+- id: docker-service
+  name: "Docker: containers and stacks"
+  description: View containers, logs, networks, images
+  type: allow
+  color: "#0ea5e9"
+  enabled: true
+  commands:
+    - cmd: docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+      description: Running containers
+    - cmd: docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+      description: All containers including stopped
+    - cmd: docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}'
+      description: CPU/RAM per container
+    - cmd: docker network ls
+      description: Docker networks
+    - cmd: docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}'
+      description: Docker images
+    - cmd: docker system df
+      description: Docker disk usage
+    - cmd: docker compose ls
+      description: Compose stacks
+
+- id: deny-destructive
+  name: "DENY: destructive operations"
+  description: Block deletion, shutdown, reboot — highest priority
+  type: deny
+  color: "#7f1d1d"
+  enabled: true
+  commands:
+    - cmd: rm
+      description: Delete files
+    - cmd: rmdir
+      description: Delete directories
+    - cmd: mkfs
+      description: Format filesystem
+    - cmd: dd
+      description: Low-level write
+    - cmd: reboot
+      description: Reboot
+    - cmd: shutdown
+      description: Shutdown
+    - cmd: poweroff
+      description: Power off
+    - cmd: docker rm
+      description: Remove containers
+    - cmd: docker stop
+      description: Stop containers
+    - cmd: docker kill
+      description: Kill containers
+    - cmd: docker system prune
+      description: Docker cleanup

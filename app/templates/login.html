@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — MCP Gate</title>
+<link rel="icon" href="/static/favicon.png">
+<style>
+:root{--bg:{{ appearance.bg_color or '#0f1117' }};--card-bg:{{ appearance.card_bg or '#1a1d27' }};--text:#e0e0e0;--text2:#888;--accent:{{ appearance.accent_color or '#6366f1' }};--border:#2a2d37;--bg3:#252830;--btn-primary:{{ appearance.btn_primary or '#4f52b8' }}}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center;align-items:center;min-height:100vh;
+{% if appearance.bg_image %}background-image:url('{{ appearance.bg_image }}');background-size:cover;background-attachment:fixed;{% endif %}}
+.login-card{background:rgba(26,29,39,0.92);backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:380px;text-align:center}
+.login-logo{margin-bottom:24px}
+.login-logo img{max-width:180px;border-radius:8px}
+.login-title{font-size:20px;font-weight:600;margin-bottom:6px}
+.login-subtitle{font-size:13px;color:var(--text2);margin-bottom:24px}
+.form-group{margin-bottom:16px;text-align:left}
+.form-group label{display:block;font-size:12px;color:var(--text2);margin-bottom:6px}
+.form-group input{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:14px;width:100%}
+.form-group input:focus{outline:none;border-color:var(--accent)}
+.login-btn{width:100%;padding:12px;background:var(--btn-primary);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:.15s}
+.login-btn:hover{opacity:.85}
+.login-btn:disabled{opacity:.5;cursor:not-allowed}
+.error-msg{background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:10px;font-size:13px;color:#f87171;margin-bottom:16px;display:none}
+.setup-hint{font-size:12px;color:var(--accent);margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="login-logo">
+    <img src="/assets/mcp-gate_logo2.png" alt="MCP Gate" onerror="this.style.display='none'">
+  </div>
+  
+  {% if needs_setup %}
+  <div class="login-title">{{ i18n.get('initial_setup', 'Initial Setup') }}</div>
+  <div class="login-subtitle">{{ i18n.get('set_admin_password', 'Set your admin password to get started') }}</div>
+  <div class="setup-hint">{{ i18n.get('min_8_chars', 'Minimum 8 characters') }}</div>
+  {% else %}
+  <div class="login-title">MCP Gate</div>
+  <div class="login-subtitle">{{ i18n.get('enter_password', 'Enter admin password') }}</div>
+  {% endif %}
+  
+  <div class="error-msg" id="error"></div>
+  
+  <form id="loginForm" onsubmit="return doLogin(event)">
+    <div class="form-group">
+      <label>{{ i18n.get('password', 'Password') }}</label>
+      <input type="password" id="password" autofocus required minlength="{% if needs_setup %}8{% else %}1{% endif %}"
+             placeholder="{% if needs_setup %}{{ i18n.get('new_password', 'New password (min 8 chars)') }}{% else %}••••••••{% endif %}">
+    </div>
+    
+    {% if needs_setup %}
+    <div class="form-group">
+      <label>{{ i18n.get('confirm_password', 'Confirm password') }}</label>
+      <input type="password" id="password2" required minlength="8"
+             placeholder="{{ i18n.get('confirm_password', 'Confirm password') }}">
+    </div>
+    {% endif %}
+    
+    <button type="submit" class="login-btn" id="submitBtn">
+      {% if needs_setup %}{{ i18n.get('create_password', 'Create Password') }}{% else %}{{ i18n.get('login', 'Log In') }}{% endif %}
+    </button>
+  </form>
+</div>
+
+<script>
+async function doLogin(e) {
+  e.preventDefault();
+  const err = document.getElementById('error');
+  const btn = document.getElementById('submitBtn');
+  const pw = document.getElementById('password').value;
+  
+  {% if needs_setup %}
+  const pw2 = document.getElementById('password2').value;
+  if (pw !== pw2) {
+    err.textContent = '{{ i18n.get("passwords_dont_match", "Passwords don\\'t match") }}';
+    err.style.display = 'block';
+    return false;
+  }
+  {% endif %}
+  
+  btn.disabled = true;
+  err.style.display = 'none';
+  
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pw})
+    });
+    const data = await resp.json();
+    
+    if (resp.ok) {
+      const next = new URLSearchParams(location.search).get('next') || '/';
+      location.href = next;
+    } else {
+      err.textContent = data.error || 'Login failed';
+      err.style.display = 'block';
+    }
+  } catch(e) {
+    err.textContent = 'Connection error';
+    err.style.display = 'block';
+  }
+  btn.disabled = false;
+  return false;
+}
+</script>
+</body>
+</html>

@@ -54,19 +54,23 @@
 <div id="changelog" class="card">
   <h2 x-data x-text="$store.i18n?.t('about.changelog')||'Changelog'"></h2>
   <table>
-    <tr><td class="text-muted" style="width:80px"><b>v0.0.7</b></td><td>
-      <b>MCP Protocol Transport</b> — SSE + JSON-RPC 2.0 + OAuth 2.0. Claude.ai and other MCP clients connect natively via <code>/sse</code>. OAuth token bound to agent.<br>
-      <b>Deny command sets</b> — type <code>deny</code> with highest priority, dark red style (✕).<br>
-      <b>INTERSECTION + DENY logic</b> — agent gets only intersection of allow-sets minus deny-sets.<br>
-      <b>Fernet API keys</b> — reversible encryption, Show/Hide.<br>
-      <b>Toggle switches</b> — sliders everywhere, disabled elements dimmed.<br>
-      <b>Hosts: grid/list + Export/Import.</b> i18n updates (ru/en).
+    <tr><td class="text-muted" style="width:80px"><b>v0.1.0</b></td><td>
+      <b>MCP Protocol Transport</b> — Streamable HTTP + SSE + OAuth 2.0. Claude.ai, Cursor, Windsurf, Continue, Cline connect natively. OAuth token bound to agent.<br>
+      <b>App-level authentication</b> — three modes: basic (bcrypt + HMAC cookie), proxy (Authentik/Keycloak), none. Login page, first-time setup wizard.<br>
+      <b>Agents management</b> — Claude, ChatGPT, Gemini, Cursor, Windsurf, Continue, Cline, Open WebUI, Custom. Per-agent command sets, rate limits, allowed hosts.<br>
+      <b>Deny command sets</b> — type <code>deny</code> with highest priority. Authorization: <code>(host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)</code>.<br>
+      <b>Parameterized commands</b> — variables with regex validation, defaults, shell character blocking.<br>
+      <b>Secrets Vault</b> — Fernet-encrypted, <code>$SECRET{id}</code> substitution, output scrubbing.<br>
+      <b>Host Setup Instructions</b> — auto-generated useradd, SSH keys, sudoers whitelist.<br>
+      <b>Import/Export</b> — paste JSON or drag-and-drop .json for hosts, agents, command sets, secrets.<br>
+      <b>Audit</b> — CRUD logging, quick-filter chips, advanced filters, JSON/CSV export, WebSocket real-time.<br>
+      <b>SSH security</b> — managed known_hosts (TOFU), Ed25519 key generation.<br>
+      <b>Appearance</b> — 6 themes, glassmorphism, custom backgrounds, custom logo/favicon.<br>
+      <b>Dashboard</b> — stat cards, host/agent tiles with ping, clickable 24h/7d metrics.<br>
+      <b>Notifications</b> — Telegram bot and SMTP email alerts.<br>
+      <b>i18n</b> — English and Russian, full coverage.
     </td></tr>
-    <tr><td class="text-muted">v0.0.6</td><td>Agents, parameterized commands, sandbox, duplication, branding.</td></tr>
-    <tr><td class="text-muted">v0.0.5</td><td>Parameterized commands (core), custom logo/favicon.</td></tr>
-    <tr><td class="text-muted">v0.0.4</td><td>i18n (ru/en), file export, notifications, AGPLv3.</td></tr>
-    <tr><td class="text-muted">v0.0.3</td><td>Approval countdown, crypto wallets, nav badge.</td></tr>
-    <tr><td class="text-muted">v0.0.1</td><td>Initial: hosts, whitelist, command sets, approvals, Fernet vault, audit, SSH, i18n, themes.</td></tr>
+    <tr><td class="text-muted">v0.0.6</td><td>Initial public release. Hosts, whitelist SSH, approvals (4 modes), rate limiting, dry run, web UI, audit log.</td></tr>
   </table>
 </div>
 

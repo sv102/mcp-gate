@@ -1,5 +1,5 @@
 """
-storage.py — Data layer for MCP Gate v0.0.7
+storage.py — Data layer for MCP Gate v0.1.0
 Handles hosts, command sets (allow/deny), secrets, agents, audit, config.
 """
 

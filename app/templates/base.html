@@ -117,8 +117,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
   <a href="/about" class="{% if page=='about' %}active{% endif %}" id="nl-about">ℹ <span>About</span></a>
   <div class="nav-spacer"></div>
   <div class="nav-bottom">
-    <a href="/logout" class="nav-logout" onclick="return confirm('Logout?')" id="nl-logout">🚪 <span>Logout</span></a>
-    <div class="nav-ver"><a href="/about" title="Changelog">v{{ version or '0.0.7' }}</a></div>
+    <a href="#" class="nav-logout" onclick="doLogout(); return false;" id="nl-logout">🚪 <span>Logout</span></a>
+    <div class="nav-ver"><a href="/about" title="Changelog">v{{ version or '0.1.0' }}</a></div>
   </div>
 </nav>
 <div class="main">{% block content %}{% endblock %}</div>
@@ -176,4 +176,11 @@ function _applyI18n(){
 setTimeout(_applyI18n,100);
 </script>
 {% block scripts %}{% endblock %}
+<script>
+async function doLogout(){
+  if(!confirm('Logout?'))return;
+  await fetch('/api/auth/logout',{method:'POST'});
+  location.href='/login';
+}
+</script>
 </body></html>

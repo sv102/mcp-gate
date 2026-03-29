@@ -1,0 +1,47 @@
+# Example: hosts.yaml
+# Copy to data/hosts.yaml and modify for your environment
+#
+# Each host defines an SSH target with whitelisted commands.
+# Commands can be exact strings or parameterized with {variable} syntax.
+
+- id: web-server
+  name: Web Server (Production)
+  hostname: 192.168.1.10
+  port: 22
+  username: mcp-reader
+  enabled: true
+  mode: optimistic           # auto | optimistic | pessimistic | strict
+  rate_limit: 30             # max requests per minute
+  command_sets:              # reusable command groups (defined in command_sets.yaml)
+    - system-basic
+    - docker-service
+    - deny-destructive
+  sandbox_dir: /tmp/mcp      # optional working directory for file operations
+  commands:                  # host-specific commands (in addition to command sets)
+    - cmd: tail -n 100 /var/log/nginx/error.log
+      description: Nginx error log (last 100 lines)
+    - cmd: "docker logs {container} --tail {lines}"
+      description: Container logs with parameters
+      params:
+        container:
+          pattern: "^[a-z0-9][a-z0-9_.-]{0,63}$"
+          description: Container name
+        lines:
+          pattern: "^[0-9]{1,4}$"
+          default: "50"
+          description: Number of lines
+
+- id: db-server
+  name: Database Server
+  hostname: 192.168.1.20
+  port: 22
+  username: mcp-reader
+  enabled: true
+  mode: pessimistic          # require manual approval, reject on timeout
+  rate_limit: 10
+  command_sets:
+    - system-basic
+    - deny-destructive
+  commands:
+    - cmd: sudo -u postgres psql -c "SELECT pg_size_pretty(pg_database_size('mydb'))"
+      description: Database size

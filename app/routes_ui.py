@@ -102,3 +102,18 @@ async def ui_logout():
         '<p style="margin-top:16px"><a href="/" style="color:#818cf8">Login</a></p>'
         '</div></body></html>',
         status_code=401, headers={"WWW-Authenticate": 'Basic realm="MCP Gate"'})
+
+
+@router.get("/login")
+async def login_page(request: Request):
+    import auth as _auth
+    if _auth.check_request(request):
+        return RedirectResponse("/", status_code=302)
+    lang = storage.load_config().get("instance", {}).get("language", "ru")
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "i18n": storage.load_i18n(lang),
+        "lang": lang,
+        "needs_setup": _auth.needs_setup(),
+        "appearance": storage.load_config().get("appearance", storage._default_appearance()),
+    })

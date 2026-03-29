@@ -1,6 +1,6 @@
-"""main.py — MCP Gate v0.0.7 — SSH access control for LLM agents.
+"""main.py — MCP Gate v0.1.0 — SSH access control for LLM agents.
 Author: Sergey (@sv_102) | License: AGPLv3 | github.com/sv102/mcp-gate"""
-import asyncio, base64, csv, hashlib, io, json as J, logging, os, re, secrets as S, shlex, time
+import asyncio, csv, hashlib, io, json as J, logging, os, re, secrets as S, shlex, time
 from contextlib import asynccontextmanager
 from typing import Optional
 import bcrypt
@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import storage, ssh_client, notifications, params
+import auth
 import mcp_transport
 import executor
 import app_state
@@ -40,39 +41,94 @@ if os.path.isdir("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 app.include_router(mcp_transport.router)
-# ═══ Admin API auth middleware (defense-in-depth) ═══
+# ═══ Auth middleware ═══
+_PUBLIC_PREFIXES = (
+    "/health", "/static/", "/assets/", "/.well-known/",
+    "/oauth/", "/sse", "/messages", "/mcp",
+    "/api/exec", "/api/hosts", "/api/agent-types",
+    "/api/auth/", "/login", "/favicon",
+)
+
 @app.middleware("http")
-async def admin_auth_middleware(request: Request, call_next):
-    """App-level auth for /api/admin/* — defense-in-depth behind Traefik."""
+async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if not path.startswith("/api/admin/"):
+    # MCP transport: POST / (JSON-RPC or Bearer)
+    if path == "/" and request.method == "POST":
         return await call_next(request)
-    # Trust Traefik's forwarded user if present
-    if request.headers.get("X-Forwarded-User"):
+    # Public paths — no auth needed
+    if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
         return await call_next(request)
-    # Fallback: verify HTTP Basic Auth at app level
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Basic "):
-        try:
-            decoded = base64.b64decode(auth_header[6:]).decode()
-            user, pwd = decoded.split(":", 1)
-            cfg = storage.load_config()
-            inst = cfg.get("instance", {})
-            stored_hash = inst.get("admin_password_hash", "")
-            if stored_hash and bcrypt.checkpw(pwd.encode(), stored_hash.encode()):
-                return await call_next(request)
-        except Exception:
-            pass
-    # If auth_type is "none" — allow without auth
-    cfg = storage.load_config()
-    if cfg.get("instance", {}).get("auth_type") == "none":
+    # Check auth (mode-aware: none/basic/proxy)
+    user = auth.check_request(request)
+    if user:
+        request.state.user = user
         return await call_next(request)
-    return JSONResponse({"error": "Unauthorized"}, status_code=401,
-                        headers={"WWW-Authenticate": "Basic realm=\"MCP Gate Admin\""})
+    # Not authenticated → API gets 401, browser gets redirect
+    if path.startswith("/api/"):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return RedirectResponse(f"/login?next={path}", status_code=302)
 
 app.include_router(routes_admin.router)
 app.include_router(routes_ui.router)
 mcp_transport.set_bcast(app_state.ws_broadcast)
+
+
+
+# ═══ Auth ═══
+
+
+@app.post("/api/auth/login")
+async def api_login(request: Request):
+    body = await request.json()
+    pw = body.get("password", "")
+    if auth.needs_setup():
+        if len(pw) < 8:
+            return JSONResponse({"error": "Password must be at least 8 characters"}, 400)
+        auth.set_password(pw)
+        storage.append_audit({"command": "admin password set (initial setup)",
+                              "source": "admin", "status": "ok", "host_id": "-"})
+        resp = JSONResponse({"status": "ok", "setup": True})
+        return auth.create_session_cookie(resp)
+    if not auth.verify_password(pw):
+        storage.append_audit({"command": "login failed",
+                              "source": "admin", "status": "blocked", "host_id": "-"})
+        return JSONResponse({"error": "Invalid password"}, 401)
+    storage.append_audit({"command": "login", "source": "admin", "status": "ok", "host_id": "-"})
+    resp = JSONResponse({"status": "ok"})
+    return auth.create_session_cookie(resp)
+
+
+@app.post("/api/auth/logout")
+async def api_logout():
+    resp = JSONResponse({"status": "ok"})
+    return auth.clear_session_cookie(resp)
+
+
+@app.get("/api/auth/status")
+async def api_auth_status(request: Request):
+    return {
+        "authenticated": auth.check_request(request) is not None,
+        "user": auth.check_request(request),
+        "auth_type": auth.get_auth_type(),
+        "needs_setup": auth.needs_setup(),
+    }
+
+
+@app.post("/api/auth/change-password")
+async def api_change_pw(request: Request):
+    user = auth.check_request(request)
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, 401)
+    body = await request.json()
+    if not auth.verify_password(body.get("current_password", "")):
+        return JSONResponse({"error": "Current password incorrect"}, 403)
+    new_pw = body.get("new_password", "")
+    if len(new_pw) < 8:
+        return JSONResponse({"error": "Password must be at least 8 characters"}, 400)
+    auth.set_password(new_pw)
+    storage.append_audit({"command": "admin password changed",
+                          "source": "admin", "status": "ok", "host_id": "-"})
+    return auth.create_session_cookie(JSONResponse({"status": "ok"}))
 
 
 # ═══ Public API ═══
