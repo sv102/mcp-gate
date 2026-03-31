@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """mcp_transport.py — MCP Protocol Transport for mcp-gate.
 SSE + JSON-RPC 2.0 + OAuth 2.0. OAuth token bound to agent_id.
 Tools: exec_command, list_hosts, server_health
@@ -277,7 +280,7 @@ async def oauth_authorize(
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>MCP-Gate \u2014 Authorize</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" href="/assets/connector-icon.png">
+<link rel="icon" href="/static/logo/mcp-gate_favicon.png">
 <style>
   body{{font-family:system-ui,sans-serif;max-width:460px;margin:60px auto;padding:20px;background:{bg};color:{text_c}}}
   .card{{background:{card};border-radius:12px;padding:32px;box-shadow:0 4px 24px rgba(0,0,0,.4);backdrop-filter:blur(12px)}}
@@ -290,7 +293,7 @@ async def oauth_authorize(
   .info{{font-size:13px;color:#999;margin-bottom:20px}}
   .note{{font-size:11px;color:#777;margin-top:-8px;margin-bottom:16px}}
 </style></head><body><div class="card">
-  <img src="/assets/oauth-logo.png" alt="MCP-Gate" class="logo">
+  <img src="/static/logo/mcp-gate_logonameW.png" alt="MCP-Gate" class="logo">
   <p class="info">An MCP client requests access to execute commands on your managed SSH hosts.</p>
   <form method="post" action="/oauth/approve">
     <input type="hidden" name="client_id" value="{client_id}">
@@ -369,7 +372,7 @@ async def oauth_token(request: Request):
 async def favicon():
     import os
     from fastapi.responses import FileResponse
-    ico = os.path.join(os.getenv("DATA_DIR", "/data"), "assets", "connector-icon.png")
+    ico = os.path.join("/app", "static", "logo", "mcp-gate_favicon.png")
     if os.path.exists(ico):
         return FileResponse(ico, media_type="image/png")
     raise HTTPException(404)

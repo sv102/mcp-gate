@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """main.py — MCP Gate v0.1.0 — SSH access control for LLM agents.
 Author: Sergey (@sv_102) | License: AGPLv3 | github.com/sv102/mcp-gate"""
 import asyncio, csv, hashlib, io, json as J, logging, os, re, secrets as S, shlex, time
@@ -21,7 +24,7 @@ from models import ExecReq
 
 log = logging.getLogger("mcp-gate")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-from constants import VERSION
+from constants import VERSION, full_version, DEV_BUILD
 
 
 # ═══ App Setup ═══
@@ -156,7 +159,7 @@ async def revoke_mcp_sessions():
 async def health():
     c = storage.load_config()
     return {
-        "status": "ok", "version": VERSION, "bootstrap": c.get("bootstrap_done", False),
+        "status": "ok", "version": full_version(), "bootstrap": c.get("bootstrap_done", False),
         "hosts": len(storage.load_hosts()), "sets": len(storage.load_command_sets()),
         "agents": len(storage.load_agents()), "secrets": len(storage.load_secrets()),
     }
@@ -242,7 +245,7 @@ async def api_approve(aid: str):
     h = storage.get_host(it["host_id"])
     if not h:
         raise HTTPException(404)
-    r = executor.execute_with_secrets(h, it.get("resolved", it["command"]))
+    r = await asyncio.to_thread(executor.execute_with_secrets, h, it.get("resolved", it["command"]))
     e = {"host_id": it["host_id"], "command": it["command"], "source": "manual_approve",
          "approval_id": aid, **r}
     storage.append_audit(e)

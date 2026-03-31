@@ -1,9 +1,11 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102) — https://github.com/sv102/mcp-gate #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}MCP Gate{% endblock %}</title>
-<link rel="icon" id="favicon" href="/static/favicon.png">
+<link rel="icon" id="favicon" href="/static/logo/mcp-gate_favicon.png">
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js" defer></script>
 <style>
 :root{--bg:#0f1117;--card-bg:#1a1d27;--card-border:#2a2d37;--nav-bg:rgba(26,29,39,0.85);--text:#e0e0e0;--text2:#888;--accent:#6366f1;--accent2:#6366f1cc;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--orange:#f97316;--cyan:#06b6d4;--border:#2a2d37;--bg3:#252830;--glass-blur:0;--panel-opacity:1;--btn-primary:#4f52b8;--btn-success:#1a8a47;--btn-danger:#b83a3a;--btn-info:#0891a2;--btn-warning:#b47a10}
@@ -98,7 +100,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 </style></head>
 <body>
 <nav class="nav" id="main-nav">
-  <div class="nav-logo"><img src="/static/mcp-gate_logo2.png" alt="MCP Gate"></div>
+  <div class="nav-logo"><img src="/static/logo/mcp-gate_logonameW.png" alt="MCP Gate"></div>
   <div class="nav-section" id="ns-manage">Management</div>
   <a href="/dashboard" class="{% if page=='dashboard' %}active{% endif %}" id="nl-dashboard">📊 <span>Dashboard</span></a>
   <a href="/agents" class="{% if page=='agents' %}active{% endif %}" id="nl-agents">🤖 <span>Agents</span></a>
@@ -165,7 +167,7 @@ document.addEventListener('alpine:init',()=>{
 document.addEventListener('click',function _r(){const ac=_getAC();if(ac&&ac.state==='suspended')ac.resume();document.removeEventListener('click',_r)});
 function _notifyPerm(){if('Notification' in window&&Notification.permission==='default')Notification.requestPermission()}
 setTimeout(_notifyPerm,3000);
-function _browserNotify(t,b){try{if(!('Notification' in window)||Notification.permission!=='granted'||document.hasFocus())return;new Notification(t,{body:b,icon:'/static/favicon.png',tag:'mcpg-'+Date.now()})}catch(e){}}
+function _browserNotify(t,b){try{if(!('Notification' in window)||Notification.permission!=='granted'||document.hasFocus())return;new Notification(t,{body:b,icon:'/static/logo/mcp-gate_favicon.png',tag:'mcpg-'+Date.now()})}catch(e){}}
 function isNewEvent(t){return t&&(Date.now()/1000-t)<60}
 function T(key){const i=window._i18n;if(!i)return key;return key.split('.').reduce((o,k)=>o?.[k],i)||key}
 function _applyI18n(){

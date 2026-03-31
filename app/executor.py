@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """
 executor.py — Unified command execution logic for MCP Gate.
 Single source of truth: auth check → params → approval → secrets → SSH → audit → broadcast.
@@ -34,9 +37,11 @@ def get_exec_delay(host: dict, wl_entry: dict) -> float:
 def execute_with_secrets(host: dict, cmd: str) -> dict:
     """Execute command via SSH with secret substitution and output scrubbing.
 
+    Synchronous — must be called via asyncio.to_thread() from async contexts.
+
     Used by:
       - execute_command() for immediate execution
-      - approval_loop / api_approve in main.py for deferred execution
+      - approval_loop / api_approve in tasks.py for deferred execution
     """
     resolved, scrub = storage.substitute_secrets(cmd, host["id"])
     result = ssh_client.execute(host, resolved)
@@ -143,7 +148,8 @@ async def execute_command(
         if delay > 0:
             await asyncio.sleep(delay)
         try:
-            result = execute_with_secrets(host, resolved_cmd)
+            # SSH is synchronous (Paramiko) — run in thread pool to avoid blocking event loop
+            result = await asyncio.to_thread(execute_with_secrets, host, resolved_cmd)
         except ValueError as ve:
             entry = {"host_id": host["id"], "command": command, "source": source,
                      "agent_id": agent_id, "status": "blocked", "reason": str(ve)}

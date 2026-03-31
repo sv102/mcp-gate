@@ -1,7 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """routes_admin.py — Admin CRUD routes for MCP Gate.
 Hosts, Agents, Command Sets, Secrets, Settings, Audit, Backup, Appearance, i18n, Bootstrap.
 """
 import csv
+import re
 import hashlib
 import io
 import json as J
@@ -692,6 +696,101 @@ async def backup():
 @router.post("/api/admin/restore")
 async def restore(req: Request):
     return {"status": "restored", **storage.import_backup(await req.json())}
+
+
+
+
+# ═══ Themes ═══
+
+@router.get("/api/admin/themes")
+async def get_themes():
+    return storage.load_themes()
+
+@router.post("/api/admin/themes")
+async def create_theme(req: Request):
+    body = await req.json()
+    tid = body.get("id", "").strip().lower().replace(" ", "-")
+    if not tid or not re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", tid):
+        raise HTTPException(400, "Invalid theme ID")
+    if tid.startswith("sys-"):
+        raise HTTPException(400, "Cannot use sys- prefix for user themes")
+    if storage.get_theme(tid):
+        raise HTTPException(409, "Theme ID already exists")
+    theme = {"id": tid, "name": body.get("name", tid), "system": False}
+    for k in storage._THEME_FIELDS:
+        if k in body:
+            theme[k] = body[k]
+    storage.upsert_theme(theme)
+    storage.append_audit({"command": f"create theme: {tid}", "source": "admin", "status": "ok", "host_id": "-"})
+    return {"status": "created", "id": tid}
+
+@router.put("/api/admin/themes/{tid}")
+async def update_theme(tid: str, req: Request):
+    theme = storage.get_theme(tid)
+    if not theme:
+        raise HTTPException(404)
+    body = await req.json()
+    if "name" in body and not theme.get("system"):
+        theme["name"] = body["name"]
+    for k in storage._THEME_FIELDS:
+        if k in body:
+            theme[k] = body[k]
+    storage.upsert_theme(theme)
+    return {"status": "updated"}
+
+@router.delete("/api/admin/themes/{tid}")
+async def del_theme(tid: str):
+    theme = storage.get_theme(tid)
+    if not theme:
+        raise HTTPException(404)
+    if theme.get("system"):
+        raise HTTPException(403, "Cannot delete system theme")
+    storage.delete_theme(tid)
+    storage.append_audit({"command": f"delete theme: {tid}", "source": "admin", "status": "ok", "host_id": "-"})
+    return {"status": "deleted"}
+
+@router.post("/api/admin/themes/{tid}/duplicate")
+async def dup_theme(tid: str, req: Request):
+    src = storage.get_theme(tid)
+    if not src:
+        raise HTTPException(404)
+    body = await req.json() if req.headers.get("content-type","").startswith("application/json") else {}
+    base_id = tid.replace("sys-", "") + "-copy"
+    new_id = base_id
+    n = 1
+    while storage.get_theme(new_id):
+        n += 1
+        new_id = f"{base_id}-{n}"
+    dup = dict(src)
+    dup["id"] = new_id
+    dup["name"] = body.get("name", src["name"].replace("[Sys] ", "") + " (copy)")
+    dup["system"] = False
+    storage.upsert_theme(dup)
+    storage.append_audit({"command": f"duplicate theme: {tid} → {new_id}", "source": "admin", "status": "ok", "host_id": "-"})
+    return {"status": "created", "id": new_id, "theme": dup}
+
+@router.post("/api/admin/themes/reset-system")
+async def reset_sys_themes():
+    count = storage.reset_system_themes()
+    return {"status": "reset", "count": count}
+
+@router.get("/api/admin/themes/export")
+async def export_themes(ids: str = ""):
+    id_list = [x.strip() for x in ids.split(",") if x.strip()] if ids else None
+    data = storage.export_themes(id_list)
+    return StreamingResponse(
+        iter([J.dumps(data, ensure_ascii=False, indent=2)]),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=mcp_gate_themes.json"})
+
+@router.post("/api/admin/themes/import")
+async def import_themes(req: Request):
+    body = await req.json()
+    items = body if isinstance(body, list) else [body]
+    imported = storage.import_themes(items)
+    if imported:
+        storage.append_audit({"command": f"import themes: {imported}", "source": "admin", "status": "ok", "host_id": "-"})
+    return {"status": "imported", "count": len(imported), "ids": imported}
 
 
 # ═══ Appearance ═══

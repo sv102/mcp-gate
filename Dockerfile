@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """models.py — Pydantic models for MCP Gate API."""
 from typing import Optional
 from pydantic import BaseModel

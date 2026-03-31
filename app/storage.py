@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """
 storage.py — Data layer for MCP Gate v0.1.0
 Handles hosts, command sets (allow/deny), secrets, agents, audit, config.
@@ -90,7 +93,7 @@ def _decrypt_value(e: str) -> str:
 def _default_appearance():
     return {"accent_color": "#6366f1", "bg_color": "#0f1117", "card_bg": "#1a1d27",
             "nav_bg": "#1a1d27", "text_color": "#e0e0e0", "glass_blur": 0, "panel_opacity": 1.0,
-            "bg_image": "", "btn_primary": "#4f52b8", "btn_success": "#1a8a47",
+            "bg_image": "/static/background/bg-default.jpg", "btn_primary": "#4f52b8", "btn_success": "#1a8a47",
             "btn_danger": "#b83a3a", "btn_info": "#0891a2", "btn_warning": "#b47a10"}
 
 
@@ -103,6 +106,158 @@ def _default_instance():
 def _default_templates():
     return {"blocked": "🚫 Blocked: {command} on {host}", "approved": "✅ Approved: {command}",
             "error": "❌ Error: {command} on {host}", "pending": "⏳ Pending: {command}"}
+
+
+# ═══ Themes ═══
+
+def _default_system_themes():
+    """Factory system themes — cannot be deleted, can be reset."""
+    return [
+        {"id": "sys-standard", "name": "[Sys] Standard", "system": True,
+         "accent_color": "#6366f1", "bg_color": "#0f1117", "card_bg": "#1a1d27",
+         "nav_bg": "#1a1d27", "text_color": "#e0e0e0", "glass_blur": 0, "panel_opacity": 1.0,
+         "bg_image": "", "btn_primary": "#4f52b8", "btn_success": "#1a8a47",
+         "btn_danger": "#b83a3a", "btn_info": "#0891a2", "btn_warning": "#b47a10"},
+        {"id": "sys-sv-projekt", "name": "[Sys] SV-Projekt", "system": True,
+         "accent_color": "#0e3e5c", "bg_color": "#0a1929", "card_bg": "#0f2233",
+         "nav_bg": "#0c1e30", "text_color": "#c8d6e0", "glass_blur": 0, "panel_opacity": 1.0,
+         "bg_image": "", "btn_primary": "#0e3e5c", "btn_success": "#1a6a3a",
+         "btn_danger": "#8b3030", "btn_info": "#0e5e6c", "btn_warning": "#8a6a10"},
+        {"id": "sys-glass", "name": "[Sys] Glass", "system": True,
+         "accent_color": "#818cf8", "bg_color": "#0f1117", "card_bg": "rgba(26,29,39,0.7)",
+         "nav_bg": "rgba(26,29,39,0.6)", "text_color": "#e0e0e0", "glass_blur": 12, "panel_opacity": 0.85,
+         "bg_image": "/static/background/bg-default.jpg", "btn_primary": "#5558c0", "btn_success": "#1a7a42",
+         "btn_danger": "#a03838", "btn_info": "#0880a0", "btn_warning": "#9a7010"},
+        {"id": "sys-emerald", "name": "[Sys] Emerald", "system": True,
+         "accent_color": "#22c55e", "bg_color": "#0f1a0f", "card_bg": "#1a2d1a",
+         "nav_bg": "#1a2d1a", "text_color": "#d0e8d0", "glass_blur": 0, "panel_opacity": 1.0,
+         "bg_image": "", "btn_primary": "#1a8a47", "btn_success": "#1a8a47",
+         "btn_danger": "#8b3030", "btn_info": "#0e6e5c", "btn_warning": "#7a7a10"},
+        {"id": "sys-cyberpunk", "name": "[Sys] Cyberpunk", "system": True,
+         "accent_color": "#ec4899", "bg_color": "#0f0618", "card_bg": "#1a0d28",
+         "nav_bg": "#1a0d28", "text_color": "#e0d0f0", "glass_blur": 0, "panel_opacity": 1.0,
+         "bg_image": "", "btn_primary": "#b03878", "btn_success": "#1a7a47",
+         "btn_danger": "#a02040", "btn_info": "#6030b0", "btn_warning": "#a06020"},
+    ]
+
+_THEME_FIELDS = ["accent_color", "bg_color", "card_bg", "nav_bg", "text_color",
+                  "glass_blur", "panel_opacity", "bg_image",
+                  "btn_primary", "btn_success", "btn_danger", "btn_info", "btn_warning"]
+
+
+def load_themes():
+    cfg = load_config()
+    themes = cfg.get("themes")
+    if not themes:
+        themes = _default_system_themes()
+        cfg["themes"] = themes
+        save_config(cfg)
+    return themes
+
+
+def save_themes(themes):
+    cfg = load_config()
+    cfg["themes"] = themes
+    save_config(cfg)
+
+
+def get_theme(theme_id):
+    for t in load_themes():
+        if t["id"] == theme_id:
+            return t
+    return None
+
+
+def upsert_theme(theme):
+    themes = load_themes()
+    for i, t in enumerate(themes):
+        if t["id"] == theme["id"]:
+            themes[i] = theme
+            save_themes(themes)
+            return "updated"
+    themes.append(theme)
+    save_themes(themes)
+    return "created"
+
+
+def delete_theme(theme_id):
+    themes = load_themes()
+    t = next((x for x in themes if x["id"] == theme_id), None)
+    if not t:
+        return False
+    if t.get("system"):
+        return False
+    themes = [x for x in themes if x["id"] != theme_id]
+    save_themes(themes)
+    return True
+
+
+def reset_system_themes():
+    """Reset all system themes to factory defaults."""
+    themes = load_themes()
+    factory = {t["id"]: t for t in _default_system_themes()}
+    for i, t in enumerate(themes):
+        if t.get("system") and t["id"] in factory:
+            themes[i] = factory[t["id"]]
+    save_themes(themes)
+    return len(factory)
+
+
+def export_themes(ids=None):
+    """Export themes with optional base64-encoded custom backgrounds."""
+    import base64 as b64
+    themes = load_themes()
+    if ids:
+        themes = [t for t in themes if t["id"] in ids]
+    result = []
+    for t in themes:
+        te = dict(t)
+        bg = te.get("bg_image", "")
+        if bg.startswith("/assets/"):
+            fn = bg.rsplit("/", 1)[-1]
+            fp = ASSETS_DIR / fn
+            if fp.exists():
+                te["bg_image_data"] = b64.b64encode(fp.read_bytes()).decode()
+                te["bg_image_ext"] = fn.rsplit(".", 1)[-1] if "." in fn else "jpg"
+        result.append(te)
+    return result
+
+
+def import_themes(data):
+    """Import themes, decode embedded bg images."""
+    import base64 as b64
+    themes = load_themes()
+    existing_ids = {t["id"] for t in themes}
+    imported = []
+    for te in data:
+        if not te.get("id") or not te.get("name"):
+            continue
+        # Decode embedded background
+        if te.get("bg_image_data"):
+            try:
+                raw = b64.b64decode(te["bg_image_data"])
+                ext = te.get("bg_image_ext", "jpg")
+                fn = f"{hashlib.md5(raw).hexdigest()[:10]}.{ext}"
+                (ASSETS_DIR / fn).write_bytes(raw)
+                te["bg_image"] = f"/assets/{fn}"
+            except Exception:
+                pass
+            te.pop("bg_image_data", None)
+            te.pop("bg_image_ext", None)
+        # Prevent overwriting system themes
+        if te["id"] in existing_ids:
+            existing = next(t for t in themes if t["id"] == te["id"])
+            if existing.get("system"):
+                continue
+            for k, v in te.items():
+                existing[k] = v
+        else:
+            te["system"] = False
+            themes.append(te)
+        imported.append(te["id"])
+    save_themes(themes)
+    return imported
+
 
 
 def load_config() -> dict:

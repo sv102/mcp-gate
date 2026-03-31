@@ -1,9 +1,11 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102) — https://github.com/sv102/mcp-gate #}
 <!DOCTYPE html>
 <html lang="{{ lang }}">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Login — MCP Gate</title>
-<link rel="icon" href="/static/favicon.png">
+<link rel="icon" href="/static/logo/mcp-gate_favicon.png">
 <style>
 :root{--bg:{{ appearance.bg_color or '#0f1117' }};--card-bg:{{ appearance.card_bg or '#1a1d27' }};--text:#e0e0e0;--text2:#888;--accent:{{ appearance.accent_color or '#6366f1' }};--border:#2a2d37;--bg3:#252830;--btn-primary:{{ appearance.btn_primary or '#4f52b8' }}}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -11,7 +13,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:v
 {% if appearance.bg_image %}background-image:url('{{ appearance.bg_image }}');background-size:cover;background-attachment:fixed;{% endif %}}
 .login-card{background:rgba(26,29,39,0.92);backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:380px;text-align:center}
 .login-logo{margin-bottom:24px}
-.login-logo img{max-width:180px;border-radius:8px}
+.login-logo img{width:85%;max-width:320px;border-radius:8px}
 .login-title{font-size:20px;font-weight:600;margin-bottom:6px}
 .login-subtitle{font-size:13px;color:var(--text2);margin-bottom:24px}
 .form-group{margin-bottom:16px;text-align:left}
@@ -28,7 +30,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:v
 <body>
 <div class="login-card">
   <div class="login-logo">
-    <img src="/assets/mcp-gate_logo2.png" alt="MCP Gate" onerror="this.style.display='none'">
+    <img src="/static/logo/mcp-gate_logonameW.png" alt="MCP Gate" onerror="this.style.display='none'">
   </div>
   
   {% if needs_setup %}

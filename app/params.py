@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """
 params.py — Parameterized command matching for MCP Gate.
 Validates and substitutes {named} parameters in whitelist templates.

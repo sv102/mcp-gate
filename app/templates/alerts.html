@@ -1,3 +1,5 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102) — https://github.com/sv102/mcp-gate #}
 {% extends "base.html" %}{% set page = 'alerts' %}
 {% block title %}Notifications{% endblock %}
 {% block content %}
@@ -129,6 +131,6 @@ function browserNotifApp(){return{
   soundOk:false,
   init(){setInterval(()=>{try{const ac=typeof _getAC==='function'?_getAC():null;this.soundOk=!!(ac&&ac.state==='running')}catch(e){this.soundOk=false}},2000)},
   requestPerm(){if('Notification' in window)Notification.requestPermission().then(p=>{this.perm=p;if(p==='granted')toast('Notifications enabled!',3000,'ok')})},
-  testNotif(){try{new Notification('MCP Gate',{body:'Test notification — everything works!',icon:'/static/favicon.png'})}catch(e){toast('Error: '+e.message,3000,'err')}}
+  testNotif(){try{new Notification('MCP Gate',{body:'Test notification — everything works!',icon:'/static/logo/mcp-gate_favicon.png'})}catch(e){toast('Error: '+e.message,3000,'err')}}
 }}
 </script>{% endblock %}

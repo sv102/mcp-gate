@@ -1,122 +1,297 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102) — https://github.com/sv102/mcp-gate #}
 {% extends "base.html" %}{% set page = 'appearance' %}
 {% block title %}Appearance{% endblock %}
 {% block content %}
 <div x-data="appearApp()" x-init="load()">
+
+  <!-- ═══ Header + Action bar ═══ -->
   <div class="flex-between mb-2">
-    <h1>🎨 <span x-data x-text="$store.i18n?.t('appearance.title')||'Appearance'"></span></h1>
-    <div class="flex"><button class="btn btn-sm" @click="resetDefaults()">Reset</button><button class="btn btn-accent btn-sm" @click="save()">💾 Save</button></div>
-  </div>
-  <div class="grid-2">
-    <div class="card"><h2 style="margin-top:0" data-i18n="appearance.colors">Colors</h2>
-      <template x-for="[key,label] in [['accent_color','Accent'],['bg_color','Background'],['card_bg','Cards'],['nav_bg','Navigation'],['text_color','Text']]" :key="key">
-        <div class="form-row"><label x-text="label"></label><div class="flex">
-          <input type="color" :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:44px;height:30px;padding:2px;cursor:pointer">
-          <input :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:90px;font-family:monospace;font-size:12px">
-        </div></div>
-      </template>
-    </div>
-    <div class="card"><h2 style="margin-top:0" data-i18n="appearance.buttons">Buttons</h2>
-      <template x-for="[key,label,cls] in [['btn_primary','Primary','btn-accent'],['btn_success','Success','btn-green'],['btn_danger','Danger','btn-red'],['btn_info','Info','btn-cyan'],['btn_warning','Warning','btn-orange']]" :key="key">
-        <div class="form-row"><label x-text="label"></label><div class="flex">
-          <input type="color" :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:44px;height:30px;padding:2px;cursor:pointer">
-          <input :value="f[key]" @input="f[key]=$event.target.value;applyLive()" style="width:90px;font-family:monospace;font-size:12px">
-          <button class="btn btn-sm" :class="cls">Sample</button>
-        </div></div>
-      </template>
+    <h1>🎨 <span x-text="$store.i18n.t('appearance.title')"></span></h1>
+    <div class="action-bar">
+      <button class="ab ab-import" @click="openBulkImport()">📥 <span x-text="$store.i18n.t('common.import')"></span></button>
+      <button class="ab ab-export" @click="doExportThemes()">📤 <span x-text="$store.i18n.t('common.export')"></span></button>
+      <div class="sep"></div>
+      <button class="ab ab-add" @click="openCreateTheme()">+ <span x-text="$store.i18n.t('appearance.create_theme')"></span></button>
+      <div class="sep"></div>
+      <button class="ab ab-neutral" @click="resetAllSystem()">↺ <span x-text="$store.i18n.t('appearance.reset_all_system')"></span></button>
+      <button class="ab ab-neutral" @click="save()">💾 <span x-text="$store.i18n.t('appearance.save_appearance')"></span></button>
     </div>
   </div>
-  <div class="grid-2">
-    <div class="card"><h2 style="margin-top:0" data-i18n="appearance.effects">Effects</h2>
-      <div class="form-row"><label>Glass blur (px): <span x-text="f.glass_blur"></span></label>
-        <input type="range" min="0" max="24" x-model.number="f.glass_blur" style="width:100%" @input="applyLive()"></div>
-      <div class="form-row"><label>Panel opacity: <span x-text="f.panel_opacity.toFixed(2)"></span></label>
-        <input type="range" min="0.3" max="1" step="0.05" x-model.number="f.panel_opacity" style="width:100%" @input="applyLive()"></div>
-    </div>
-    <div class="card"><h2 style="margin-top:0">Background</h2>
-      <div class="form-row">
-        <label class="flex" style="gap:8px;align-items:center;cursor:pointer">
-          <input type="checkbox" x-model="useBgImage" @change="toggleBgImage()">
-          <span x-data x-text="$store.i18n?.t('appearance.use_bg_image')||'Использовать фоновое изображение'"></span>
-        </label>
+
+  <!-- ═══ Theme tiles ═══ -->
+  <div class="grid-3 mb-2">
+    <template x-for="t in themes" :key="t.id">
+      <div class="card" style="cursor:pointer;position:relative;transition:border-color .2s,box-shadow .2s"
+           :style="activeThemeId===t.id?'border-color:var(--accent);box-shadow:0 0 12px rgba(99,102,241,0.25)':''"
+           @click="applyTheme(t)">
+        <div style="position:absolute;top:10px;right:12px">
+          <span x-show="activeThemeId===t.id" class="badge badge-ok" style="font-size:10px">✓ <span x-text="$store.i18n.t('appearance.active')"></span></span>
+          <span x-show="activeThemeId!==t.id && t.system" class="badge" style="font-size:10px" x-text="$store.i18n.t('appearance.system')"></span>
+        </div>
+        <div class="flex" style="gap:10px;margin-bottom:10px;padding-right:60px">
+          <span style="width:18px;height:18px;border-radius:50%;flex-shrink:0;margin-top:2px;border:2px solid rgba(255,255,255,.15)" :style="'background:'+t.accent_color"></span>
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" x-text="t.name"></div>
+            <div class="text-muted" style="font-size:11px" x-text="t.id"></div>
+          </div>
+        </div>
+        <div class="flex" style="gap:3px;margin-bottom:10px">
+          <template x-for="c in [t.bg_color,t.card_bg,t.accent_color,t.btn_primary,t.btn_success,t.btn_danger,t.btn_info]">
+            <span style="width:18px;height:18px;border-radius:4px;border:1px solid rgba(255,255,255,.12)" :style="'background:'+c"></span>
+          </template>
+        </div>
+        <div class="flex" style="gap:4px;flex-wrap:wrap;margin-bottom:8px">
+          <span x-show="t.bg_image" class="badge" style="font-size:10px">🖼</span>
+          <span x-show="t.glass_blur>0" class="badge" style="font-size:10px">✨ <span x-text="t.glass_blur"></span>px</span>
+          <span x-show="(t.panel_opacity||1)<1" class="badge" style="font-size:10px">◐ <span x-text="(t.panel_opacity||1).toFixed(2)"></span></span>
+        </div>
+        <div class="flex" style="gap:4px;flex-wrap:wrap" @click.stop>
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 8px" @click="duplicateTheme(t.id)" :title="$store.i18n.t('appearance.duplicate')">📋</button>
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 8px" @click="openEditTheme(t)" :title="$store.i18n.t('common.edit')">✏️</button>
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 8px" @click="exportSingle(t.id)" :title="$store.i18n.t('common.export')">📤</button>
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 8px" x-show="!t.system" @click="openSingleImport(t)" :title="$store.i18n.t('common.import')">📥</button>
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 8px" x-show="t.system" @click="resetOneSystem(t.id)" :title="$store.i18n.t('common.reset')">↺</button>
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 8px;background:#7f1d1d;color:#fecaca" x-show="!t.system" @click="deleteTheme(t.id)" :title="$store.i18n.t('common.delete')">🗑</button>
+          <div style="margin-left:auto"></div>
+          <button class="btn btn-sm btn-accent" style="font-size:11px;padding:3px 8px" x-show="activeThemeId===t.id" @click="openEditTheme(t)">✏️ <span x-text="$store.i18n.t('common.edit')"></span></button>
+        </div>
       </div>
-      <div x-show="useBgImage && f.bg_image" class="mt-2">
-        <div class="text-muted" style="font-size:11px;margin-bottom:4px" x-text="f.bg_image"></div>
-        <div style="width:100%;height:60px;border-radius:6px;background-size:cover;background-position:center;border:1px solid var(--border)" :style="'background-image:url('+f.bg_image+')'"></div>
-      </div>
-      <div x-show="!useBgImage" class="text-muted mt-2" style="font-size:12px" x-data x-text="$store.i18n?.t('appearance.bg_color_only')||'Будет использован цвет фона вместо изображения.'"></div>
-    </div>
+    </template>
   </div>
-  <div class="card"><h2 style="margin-top:0" data-i18n="appearance.themes">Themes</h2><div class="flex-wrap mt-2">
-    <template x-for="p in presets" :key="p.name"><button class="btn btn-sm" @click="applyPreset(p)">
-      <span style="width:14px;height:14px;border-radius:50%;border:1px solid var(--border);display:inline-block" :style="'background:'+p.accent_color"></span>
-      <span x-text="p.name"></span>
-    </button></template>
-  </div></div>
-  <div class="card"><h2 style="margin-top:0" data-i18n="appearance.preview">Preview</h2><div class="grid-3 mt-2">
-    <div><button class="btn btn-accent btn-sm">Primary</button> <button class="btn btn-green btn-sm">Success</button></div>
-    <div><button class="btn btn-red btn-sm">Danger</button> <button class="btn btn-cyan btn-sm">Info</button></div>
-    <div><span class="badge badge-ok">OK</span> <span class="badge badge-err">Err</span> <span class="badge badge-warn">Warn</span> <span class="badge badge-pending">Pend</span></div>
-  </div></div>
+
+  <!-- ═══ MODAL: Create Theme ═══ -->
+  <template x-if="showCreateModal">
+    <div class="overlay" @mousedown.self="showCreateModal=false">
+      <div class="modal" style="max-width:440px" @click.stop>
+        <button class="modal-close" @click="showCreateModal=false">&times;</button>
+        <h2 x-text="$store.i18n.t('appearance.create_theme')"></h2>
+        <div class="form-row">
+          <label x-text="$store.i18n.t('appearance.theme_name')"></label>
+          <input type="text" x-model="modalName" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text)">
+        </div>
+        <div class="form-row">
+          <label>ID <span class="text-muted" style="font-size:11px" x-text="'('+$store.i18n.t('appearance.theme_id_auto')+')'"></span></label>
+          <input type="text" :value="autoId()" disabled style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text2);font-family:monospace;font-size:12px">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" x-model="createFromCurrent" id="cfc" style="flex-shrink:0;width:16px;height:16px">
+          <label for="cfc" style="margin:0;cursor:pointer;font-size:13px" x-text="$store.i18n.t('appearance.copy_current')"></label>
+        </div>
+        <div class="flex mt-4" style="gap:8px;justify-content:flex-end">
+          <button class="btn" @click="showCreateModal=false" x-text="$store.i18n.t('common.cancel')"></button>
+          <button class="btn btn-accent" @click="doCreateTheme()" x-text="$store.i18n.t('common.add')"></button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ═══ MODAL: Edit Theme ═══ -->
+  <template x-if="showEditModal">
+    <div class="overlay" @mousedown.self="cancelEdit()">
+      <div class="modal" style="max-width:600px;max-height:90vh;overflow-y:auto" @click.stop>
+        <button class="modal-close" @click="cancelEdit()">&times;</button>
+        <h2><span x-text="$store.i18n.t('appearance.edit_theme')"></span>: <span x-text="editTheme.name"></span></h2>
+
+        <div class="form-row" x-show="!editTheme.system">
+          <label x-text="$store.i18n.t('appearance.theme_name')"></label>
+          <input type="text" x-model="editTheme.name" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text)">
+        </div>
+
+        <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px;color:var(--text2)" x-text="$store.i18n.t('appearance.colors_section')"></h3>
+        <div class="grid-2">
+          <template x-for="[key,lk] in [['accent_color','accent'],['bg_color','background'],['card_bg','cards'],['nav_bg','navigation'],['text_color','text']]" :key="key">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+              <input type="color" :value="editTheme[key]||'#000'" @input="editTheme[key]=$event.target.value;previewEdit()" style="width:36px;height:28px;padding:1px;cursor:pointer;flex-shrink:0">
+              <input :value="editTheme[key]||''" @input="editTheme[key]=$event.target.value;previewEdit()" style="width:80px;font-family:monospace;font-size:11px;flex-shrink:0">
+              <span class="text-muted" style="font-size:11px" x-text="$store.i18n.t('appearance.'+lk)"></span>
+            </div>
+          </template>
+        </div>
+
+        <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px;color:var(--text2)" x-text="$store.i18n.t('appearance.buttons_section')"></h3>
+        <div class="grid-2">
+          <template x-for="[key,lk] in [['btn_primary','primary'],['btn_success','success'],['btn_danger','danger'],['btn_info','info'],['btn_warning','warning']]" :key="key">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+              <input type="color" :value="editTheme[key]||'#000'" @input="editTheme[key]=$event.target.value;previewEdit()" style="width:36px;height:28px;padding:1px;cursor:pointer;flex-shrink:0">
+              <input :value="editTheme[key]||''" @input="editTheme[key]=$event.target.value;previewEdit()" style="width:80px;font-family:monospace;font-size:11px;flex-shrink:0">
+              <span class="text-muted" style="font-size:11px" x-text="$store.i18n.t('appearance.'+lk)"></span>
+            </div>
+          </template>
+        </div>
+
+        <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px;color:var(--text2)" x-text="$store.i18n.t('appearance.effects_section')"></h3>
+        <div class="grid-2">
+          <div><label style="font-size:12px"><span x-text="$store.i18n.t('appearance.glass_blur_label')"></span>: <b x-text="editTheme.glass_blur||0"></b>px</label>
+            <input type="range" min="0" max="24" x-model.number="editTheme.glass_blur" style="width:100%" @input="previewEdit()"></div>
+          <div><label style="font-size:12px"><span x-text="$store.i18n.t('appearance.opacity_label')"></span>: <b x-text="(editTheme.panel_opacity||1).toFixed(2)"></b></label>
+            <input type="range" min="0.3" max="1" step="0.05" x-model.number="editTheme.panel_opacity" style="width:100%" @input="previewEdit()"></div>
+        </div>
+
+        <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px;color:var(--text2)" x-text="$store.i18n.t('appearance.bg_section')"></h3>
+        <div x-show="editTheme.bg_image" style="width:100%;height:60px;border-radius:6px;background-size:cover;background-position:center;border:1px solid var(--border);margin-bottom:8px" :style="'background-image:url('+(editTheme.bg_image||'')+')'"></div>
+        <div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="text" x-model="editTheme.bg_image" :placeholder="$store.i18n.t('appearance.no_bg')" style="flex:1;min-width:150px;padding:6px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:monospace;font-size:11px" @input="previewEdit()">
+          <button class="btn btn-sm" style="font-size:11px" @click="editTheme.bg_image='/static/background/bg-default.jpg';previewEdit()">🔄 <span x-text="$store.i18n.t('appearance.default_bg')"></span></button>
+          <label class="btn btn-sm" style="font-size:11px;cursor:pointer">📁 <span x-text="$store.i18n.t('appearance.upload_bg')"></span>
+            <input type="file" accept="image/*" @change="uploadBgForEdit($event)" style="display:none">
+          </label>
+          <button class="btn btn-sm" style="font-size:11px" @click="editTheme.bg_image='';previewEdit()">✕</button>
+        </div>
+
+        <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px;color:var(--text2)" x-text="$store.i18n.t('appearance.preview_section')"></h3>
+        <div class="flex" style="gap:6px;flex-wrap:wrap">
+          <button class="btn btn-accent btn-sm" x-text="$store.i18n.t('appearance.primary')"></button>
+          <button class="btn btn-green btn-sm" x-text="$store.i18n.t('appearance.success')"></button>
+          <button class="btn btn-red btn-sm" x-text="$store.i18n.t('appearance.danger')"></button>
+          <button class="btn btn-cyan btn-sm" x-text="$store.i18n.t('appearance.info')"></button>
+          <span class="badge badge-ok">OK</span><span class="badge badge-err">Err</span>
+        </div>
+
+        <div class="flex mt-4" style="gap:8px;justify-content:flex-end">
+          <button class="btn" @click="cancelEdit()" x-text="$store.i18n.t('common.cancel')"></button>
+          <button class="btn btn-accent" @click="doSaveEditTheme()">💾 <span x-text="$store.i18n.t('appearance.save_apply')"></span></button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ═══ MODAL: Import Themes ═══ -->
+  <template x-if="showThemeImport">
+    <div class="overlay" @mousedown.self="showThemeImport=false">
+      <div class="modal" style="max-width:560px" @click.stop>
+        <button class="modal-close" @click="showThemeImport=false">&times;</button>
+        <h2 x-text="$store.i18n.t('appearance.import_themes')"></h2>
+        <p class="text-muted mb-2" style="font-size:13px" x-text="$store.i18n.t('appearance.import_hint')"></p>
+
+        <div class="flex mb-2" style="gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:fit-content">
+          <button class="btn btn-sm" :class="impTab==='paste'?'btn-accent':''" style="border-radius:0;border:0" @click="impTab='paste'">📋 <span x-text="$store.i18n.t('appearance.paste_json')"></span></button>
+          <button class="btn btn-sm" :class="impTab==='file'?'btn-accent':''" style="border-radius:0;border:0" @click="impTab='file'">📁 <span x-text="$store.i18n.t('appearance.upload_file')"></span></button>
+        </div>
+
+        <div x-show="impTab==='paste'">
+          <textarea x-model="impJson" rows="10" placeholder='[{"id":"my-theme","name":"My Theme",...}]' style="font-family:monospace;font-size:12px;width:100%;box-sizing:border-box" @input="impPreviewFn()"></textarea>
+        </div>
+        <div x-show="impTab==='file'">
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:border-color .2s"
+            @dragover.prevent="$el.style.borderColor='var(--accent)'"
+            @dragleave="$el.style.borderColor='var(--border)'"
+            @drop.prevent="handleImpDrop($event);$el.style.borderColor='var(--border)'"
+            @click="$refs.impFileInput.click()">
+            <div style="font-size:32px;margin-bottom:8px">📂</div>
+            <div style="font-size:13px;color:var(--text2)" x-text="$store.i18n.t('appearance.drop_hint')"></div>
+            <div x-show="impFileName" style="font-size:12px;color:var(--accent);margin-top:8px" x-text="impFileName"></div>
+          </div>
+          <input type="file" accept=".json" x-ref="impFileInput" style="display:none" @change="handleImpFile($event)">
+        </div>
+
+        <div x-show="impCount>0" class="mt-2" style="font-size:12px;color:var(--green)">✅ <b x-text="impCount"></b> <span x-text="$store.i18n.t('appearance.found_themes')"></span></div>
+        <div x-show="impError" class="mt-2" style="font-size:12px;color:var(--red)" x-text="impError"></div>
+
+        <div class="flex mt-4" style="gap:8px;justify-content:flex-end">
+          <button class="btn" @click="showThemeImport=false" x-text="$store.i18n.t('common.cancel')"></button>
+          <button class="btn btn-accent" @click="doImportThemes()" :disabled="impCount===0" x-text="$store.i18n.t('appearance.import_btn')"></button>
+        </div>
+      </div>
+    </div>
+  </template>
+
 </div>
 {% endblock %}
 {% block scripts %}<script>
 function appearApp(){
-  const D={accent_color:'#6366f1',bg_color:'#0f1117',card_bg:'#1a1d27',nav_bg:'#1a1d27',text_color:'#e0e0e0',glass_blur:0,panel_opacity:1.0,nav_logo_icon:'🔐',btn_primary:'#4f52b8',btn_success:'#1a8a47',btn_danger:'#b83a3a',btn_info:'#0891a2',btn_warning:'#b47a10'};
+  const FIELDS=['accent_color','bg_color','card_bg','nav_bg','text_color','glass_blur','panel_opacity','bg_image','btn_primary','btn_success','btn_danger','btn_info','btn_warning'];
+  const _t=k=>Alpine.store('i18n')?.t(k)||k;
   return{
-    f:JSON.parse(JSON.stringify(D)),
-    useBgImage:true,
-    _savedBgImage:'',
-    presets:[
-      {name:'Standard',accent_color:'#6366f1',bg_color:'#0f1117',card_bg:'#1a1d27',nav_bg:'#1a1d27',text_color:'#e0e0e0',glass_blur:0,panel_opacity:1,btn_primary:'#4f52b8',btn_success:'#1a8a47',btn_danger:'#b83a3a',btn_info:'#0891a2',btn_warning:'#b47a10',nav_logo_icon:'🔐'},
-      {name:'SV-Projekt',accent_color:'#0e3e5c',bg_color:'#0a1929',card_bg:'#0f2233',nav_bg:'#0c1e30',text_color:'#c8d6e0',glass_blur:0,panel_opacity:1,btn_primary:'#0e3e5c',btn_success:'#1a6a3a',btn_danger:'#8b3030',btn_info:'#0e5e6c',btn_warning:'#8a6a10',nav_logo_icon:'🛡️'},
-      {name:'Glass',accent_color:'#818cf8',bg_color:'#0f1117',card_bg:'rgba(26,29,39,0.7)',nav_bg:'rgba(26,29,39,0.6)',text_color:'#e0e0e0',glass_blur:12,panel_opacity:0.85,btn_primary:'#5558c0',btn_success:'#1a7a42',btn_danger:'#a03838',btn_info:'#0880a0',btn_warning:'#9a7010',nav_logo_icon:'🔐'},
-      {name:'Emerald',accent_color:'#22c55e',bg_color:'#0f1a0f',card_bg:'#1a2d1a',nav_bg:'#1a2d1a',text_color:'#d0e8d0',glass_blur:0,panel_opacity:1,btn_primary:'#1a8a47',btn_success:'#1a8a47',btn_danger:'#8b3030',btn_info:'#0e6e5c',btn_warning:'#7a7a10',nav_logo_icon:'⚡'},
-      {name:'Cyberpunk',accent_color:'#ec4899',bg_color:'#0f0618',card_bg:'#1a0d28',nav_bg:'#1a0d28',text_color:'#e0d0f0',glass_blur:0,panel_opacity:1,btn_primary:'#b03878',btn_success:'#1a7a47',btn_danger:'#a02040',btn_info:'#6030b0',btn_warning:'#a06020',nav_logo_icon:'🌐'},
-    ],
-    toggleBgImage(){
-      if(this.useBgImage){
-        this.f.bg_image=this._savedBgImage||this.f.bg_image;
-      }else{
-        this._savedBgImage=this.f.bg_image;
-        this.f.bg_image='';
-      }
-      this.applyLive();
-    },
+    f:{},themes:[],activeThemeId:'',_snap:null,
+    showCreateModal:false,showEditModal:false,showThemeImport:false,
+    modalName:'',createFromCurrent:true,editTheme:{},
+    impTab:'paste',impJson:'',impFileName:'',impCount:0,impError:'',impTargetId:'',
+
     async load(){
       try{
-        const r=await api('GET','/api/admin/appearance');
-        Object.keys(D).forEach(k=>{if(r[k]!==undefined)this.f[k]=r[k]});
-        if(r.bg_image!==undefined)this.f.bg_image=r.bg_image;
-        this.useBgImage=!!this.f.bg_image;
-        this._savedBgImage=this.f.bg_image||'';
-      }catch(e){}
+        const[a,th]=await Promise.all([api('GET','/api/admin/appearance'),api('GET','/api/admin/themes')]);
+        this.f=a;this.themes=th;this.activeThemeId=a.active_theme_id||'';this.applyLive(a);
+      }catch(e){console.error(e)}
     },
     async save(){
-      try{
-        await api('PUT','/api/admin/appearance',this.f);
-        toast('Saved',3000,'ok');
+      try{const d=Object.assign({},this.f);if(this.activeThemeId)d.active_theme_id=this.activeThemeId;
+        await api('PUT','/api/admin/appearance',d);toast(_t('common.save')+' ✓',3000,'ok');
       }catch(e){toast(e.message,4000,'err')}
     },
-    resetDefaults(){this.f=JSON.parse(JSON.stringify(D));this.useBgImage=false;this.f.bg_image='';this.applyLive()},
-    applyPreset(p){Object.keys(p).forEach(k=>{if(k!=='name'&&this.f.hasOwnProperty(k))this.f[k]=p[k]});this.applyLive()},
-    applyLive(){
-      const r=document.documentElement.style;
-      r.setProperty('--bg',this.f.bg_color);
-      r.setProperty('--accent',this.f.accent_color);
-      r.setProperty('--accent2',this.f.accent_color+'cc');
-      r.setProperty('--card-bg',this.f.card_bg);
-      r.setProperty('--nav-bg',this.f.nav_bg);
-      r.setProperty('--text',this.f.text_color);
-      r.setProperty('--glass-blur',(this.f.glass_blur||0)+'px');
-      r.setProperty('--panel-opacity',this.f.panel_opacity);
-      for(const k of['btn_primary','btn_success','btn_danger','btn_info','btn_warning']){
-        r.setProperty('--'+k.replace(/_/g,'-'),this.f[k]);
-      }
-      document.body.style.backgroundImage=this.f.bg_image?'url('+this.f.bg_image+')':'none';
-      document.body.style.backgroundColor=this.f.bg_color;
-      if(this.f.favicon)document.getElementById('favicon').href=this.f.favicon;
+    applyTheme(t){FIELDS.forEach(k=>{if(t[k]!==undefined)this.f[k]=t[k]});this.activeThemeId=t.id;this.applyLive(this.f)},
+    autoId(){return this.modalName.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').substring(0,63)},
+
+    openCreateTheme(){this.modalName='';this.createFromCurrent=true;this.showCreateModal=true},
+    async doCreateTheme(){
+      const name=this.modalName.trim();
+      if(!name){toast(_t('appearance.name_required'),3000,'warn');return}
+      const id=this.autoId();if(!id){toast(_t('appearance.invalid_name'),3000,'warn');return}
+      const body={id,name};
+      if(this.createFromCurrent)FIELDS.forEach(k=>{if(this.f[k]!==undefined)body[k]=this.f[k]});
+      try{await api('POST','/api/admin/themes',body);this.showCreateModal=false;
+        this.themes=await api('GET','/api/admin/themes');this.activeThemeId=id;
+        toast(_t('appearance.theme_created'),3000,'ok');
+      }catch(e){toast(e.message,4000,'err')}
     },
-    async doUpload(ev,field){const f=ev.target.files[0];if(!f)return;try{this.f[field]=await uploadFile(f);this.applyLive();toast('Uploaded',3000,'ok')}catch(e){toast(e.message,4000,'err')}}
+    openEditTheme(t){this._snap=JSON.stringify(this.f);this.editTheme=JSON.parse(JSON.stringify(t));this.showEditModal=true},
+    previewEdit(){this.applyLive(this.editTheme)},
+    cancelEdit(){if(this._snap)this.applyLive(JSON.parse(this._snap));this.showEditModal=false},
+    async doSaveEditTheme(){
+      try{await api('PUT','/api/admin/themes/'+this.editTheme.id,this.editTheme);this.showEditModal=false;
+        this.themes=await api('GET','/api/admin/themes');
+        FIELDS.forEach(k=>{if(this.editTheme[k]!==undefined)this.f[k]=this.editTheme[k]});
+        this.activeThemeId=this.editTheme.id;this.applyLive(this.f);
+        const d=Object.assign({},this.f);d.active_theme_id=this.activeThemeId;
+        await api('PUT','/api/admin/appearance',d);toast(_t('appearance.theme_saved'),3000,'ok');
+      }catch(e){toast(e.message,4000,'err')}
+    },
+    async uploadBgForEdit(ev){const f=ev.target.files[0];if(!f)return;
+      try{this.editTheme.bg_image=await uploadFile(f);this.previewEdit();toast(_t('appearance.uploaded'),2500,'ok')}catch(e){toast(e.message,4000,'err')}},
+
+    async duplicateTheme(id){try{const r=await api('POST','/api/admin/themes/'+id+'/duplicate',{});
+      this.themes=await api('GET','/api/admin/themes');toast(_t('appearance.theme_duplicated')+' → '+r.id,3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async deleteTheme(id){if(!confirm(_t('appearance.delete_theme')))return;
+      try{await api('DELETE','/api/admin/themes/'+id);if(this.activeThemeId===id)this.activeThemeId='';
+        this.themes=await api('GET','/api/admin/themes');toast(_t('appearance.theme_deleted'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async resetOneSystem(id){if(!confirm(_t('appearance.reset_one_confirm')))return;
+      try{await api('POST','/api/admin/themes/reset-system');this.themes=await api('GET','/api/admin/themes');
+        const t=this.themes.find(x=>x.id===id);if(t&&this.activeThemeId===id){this.applyTheme(t);this.save()}
+        toast(_t('appearance.theme_reset'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async resetAllSystem(){if(!confirm(_t('appearance.reset_all_confirm')))return;
+      try{await api('POST','/api/admin/themes/reset-system');this.themes=await api('GET','/api/admin/themes');
+        toast(_t('appearance.themes_reset'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+
+    async exportSingle(id){try{const r=await fetch('/api/admin/themes/export?ids='+id);const b=await r.blob();
+      const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='theme_'+id+'.json';a.click();URL.revokeObjectURL(a.href);
+      toast(_t('appearance.themes_exported'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    openSingleImport(t){this.impTargetId=t.id;this.impJson='';this.impFileName='';this.impCount=0;this.impError='';this.impTab='paste';this.showThemeImport=true},
+    async doExportThemes(){try{const r=await fetch('/api/admin/themes/export');const b=await r.blob();
+      const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='mcp_gate_themes.json';a.click();URL.revokeObjectURL(a.href);
+      toast(_t('appearance.themes_exported'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    openBulkImport(){this.impTargetId='';this.impJson='';this.impFileName='';this.impCount=0;this.impError='';this.impTab='paste';this.showThemeImport=true},
+    impPreviewFn(){this.impError='';this.impCount=0;if(!this.impJson.trim())return;
+      try{const d=JSON.parse(this.impJson);this.impCount=Array.isArray(d)?d.length:1}catch(e){this.impError='Invalid JSON: '+e.message}},
+    handleImpDrop(e){const f=e.dataTransfer.files[0];if(f)this._readF(f)},
+    handleImpFile(e){const f=e.target.files[0];if(f)this._readF(f)},
+    _readF(f){this.impFileName=f.name;const r=new FileReader();r.onload=()=>{this.impJson=r.result;this.impTab='paste';this.impPreviewFn()};r.readAsText(f)},
+    async doImportThemes(){let data;try{data=JSON.parse(this.impJson)}catch(e){toast('Invalid JSON',3000,'err');return}
+      if(!Array.isArray(data))data=[data];if(this.impTargetId&&data.length===1)data[0].id=this.impTargetId;
+      try{const r=await api('POST','/api/admin/themes/import',data);
+        this.showThemeImport=false;this.impJson='';this.impCount=0;this.impFileName='';this.impTargetId='';
+        this.themes=await api('GET','/api/admin/themes');
+        toast(_t('appearance.themes_imported')+': '+r.count,3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+
+    applyLive(s){if(!s)return;const r=document.documentElement.style;
+      if(s.bg_color)r.setProperty('--bg',s.bg_color);
+      if(s.accent_color){r.setProperty('--accent',s.accent_color);r.setProperty('--accent2',s.accent_color+'cc')}
+      if(s.card_bg)r.setProperty('--card-bg',s.card_bg);if(s.nav_bg)r.setProperty('--nav-bg',s.nav_bg);
+      if(s.text_color)r.setProperty('--text',s.text_color);
+      r.setProperty('--glass-blur',(s.glass_blur||0)+'px');
+      if(s.panel_opacity!==undefined)r.setProperty('--panel-opacity',s.panel_opacity);
+      for(const k of['btn_primary','btn_success','btn_danger','btn_info','btn_warning'])if(s[k])r.setProperty('--'+k.replace(/_/g,'-'),s[k]);
+      document.body.style.backgroundImage=s.bg_image?'url('+s.bg_image+')':'none';
+      document.body.style.backgroundColor=s.bg_color||''}
   }
 }
 </script>{% endblock %}

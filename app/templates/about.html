@@ -1,3 +1,5 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102) — https://github.com/sv102/mcp-gate #}
 {% extends "base.html" %}{% set page = 'about' %}
 {% block title %}About{% endblock %}
 {% block content %}
@@ -11,7 +13,7 @@
 <h1 x-data x-text="'ℹ️ '+($store.i18n?.t('about.title')||'About')"></h1>
 
 <div style="text-align:center;margin-bottom:24px">
-  <img src="/assets/oauth-logo.png" alt="MCP-Gate" style="max-width:320px;width:80%;border-radius:12px">
+  <img src="/static/logo/mcp-gate_logonameW.png" alt="MCP-Gate" style="max-width:320px;width:80%;border-radius:12px">
 </div>
 
 <div class="grid-2">

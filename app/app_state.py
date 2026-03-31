@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """app_state.py — Shared mutable state and helpers for MCP Gate.
 Avoids circular imports: modules import from here, not from main.
 """

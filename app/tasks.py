@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """tasks.py — Background tasks for MCP Gate: approval loop, audit trim, host ping."""
 import asyncio
 import logging
@@ -33,7 +36,10 @@ async def approval_loop():
                         d = h.get("exec_delay", 0)
                         if d > 0:
                             await asyncio.sleep(d)
-                        r = executor.execute_with_secrets(h, it.get("resolved", it["command"]))
+                        # SSH is synchronous (Paramiko) — run in thread pool to avoid blocking event loop
+                        r = await asyncio.to_thread(
+                            executor.execute_with_secrets, h, it.get("resolved", it["command"])
+                        )
                         e = {"host_id": it["host_id"], "command": it["command"],
                              "source": "auto_approve", "approval_id": it["approval_id"], **r}
                         storage.append_audit(e)
@@ -80,7 +86,8 @@ async def ping_loop():
                     continue
                 try:
                     t0 = time.time()
-                    r = ssh_client.test_connection(h)
+                    # SSH test is synchronous — run in thread pool
+                    r = await asyncio.to_thread(ssh_client.test_connection, h)
                     ms = int((time.time() - t0) * 1000)
                     app_state.host_status[hid] = {"ok": r.get("ok", False), "msg": r.get("message", ""),
                                                   "ms": ms, "ts": time.time()}

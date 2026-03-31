@@ -1,8 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 """routes_ui.py — HTML page routes for MCP Gate WebUI."""
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from constants import VERSION
+from constants import VERSION, full_version
 import storage
 import ssh_client
 
@@ -18,72 +21,81 @@ async def ui_root(r: Request):
 @router.get("/bootstrap", response_class=HTMLResponse)
 async def ui_boot(r: Request):
     return templates.TemplateResponse("bootstrap.html",
-        {"request": r, "done": storage.load_config().get("bootstrap_done", False)})
+        {"request": r, "done": storage.load_config().get("bootstrap_done", False),
+         "version": full_version()})
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def ui_dash(r: Request):
     return templates.TemplateResponse("dashboard.html", {
         "request": r, "hosts": storage.load_hosts(), "agents": storage.load_agents(),
         "recent": storage.load_audit(limit=10), "pending": storage.get_pending_approvals(),
-        "version": VERSION})
+        "version": full_version()})
 
 @router.get("/hosts", response_class=HTMLResponse)
 async def ui_hosts(r: Request):
     return templates.TemplateResponse("hosts.html", {
         "request": r, "hosts": storage.load_hosts(), "pub_key": ssh_client.get_public_key(),
-        "command_sets": storage.load_command_sets()})
+        "command_sets": storage.load_command_sets(), "version": full_version()})
 
 @router.get("/agents", response_class=HTMLResponse)
 async def ui_agents(r: Request):
     return templates.TemplateResponse("agents.html", {
         "request": r, "agents": storage.load_agents(),
-        "agent_types": storage.get_agent_types(), "version": VERSION})
+        "agent_types": storage.get_agent_types(), "version": full_version()})
 
 @router.get("/command-sets", response_class=HTMLResponse)
 async def ui_sets(r: Request):
     return templates.TemplateResponse("command_sets.html", {
         "request": r, "sets": storage.load_command_sets(), "hosts": storage.load_hosts(),
-        "agents": storage.load_agents()})
+        "agents": storage.load_agents(), "version": full_version()})
 
 @router.get("/console", response_class=HTMLResponse)
 async def ui_con(r: Request):
-    return templates.TemplateResponse("console.html", {"request": r, "hosts": storage.load_hosts()})
+    return templates.TemplateResponse("console.html", {
+        "request": r, "hosts": storage.load_hosts(), "version": full_version()})
 
 @router.get("/audit", response_class=HTMLResponse)
 async def ui_audit(r: Request):
-    return templates.TemplateResponse("audit.html", {"request": r})
+    return templates.TemplateResponse("audit.html", {
+        "request": r, "version": full_version()})
 
 @router.get("/approvals", response_class=HTMLResponse)
 async def ui_appr(r: Request):
     return templates.TemplateResponse("approvals.html", {
-        "request": r, "pending": storage.get_pending_approvals()})
+        "request": r, "pending": storage.get_pending_approvals(),
+        "version": full_version()})
 
 @router.get("/secrets", response_class=HTMLResponse)
 async def ui_sec(r: Request):
-    return templates.TemplateResponse("secrets.html", {"request": r})
+    return templates.TemplateResponse("secrets.html", {
+        "request": r, "version": full_version()})
 
 @router.get("/alerts", response_class=HTMLResponse)
 async def ui_alerts(r: Request):
-    return templates.TemplateResponse("alerts.html", {"request": r})
+    return templates.TemplateResponse("alerts.html", {
+        "request": r, "version": full_version()})
 
 @router.get("/settings", response_class=HTMLResponse)
 async def ui_set(r: Request):
-    return templates.TemplateResponse("settings.html", {"request": r})
+    return templates.TemplateResponse("settings.html", {
+        "request": r, "version": full_version()})
 
 @router.get("/appearance", response_class=HTMLResponse)
 async def ui_app(r: Request):
-    return templates.TemplateResponse("appearance.html", {"request": r})
+    return templates.TemplateResponse("appearance.html", {
+        "request": r, "version": full_version()})
 
 @router.get("/guide", response_class=HTMLResponse)
 async def ui_guide(r: Request):
-    return templates.TemplateResponse("guide.html", {"request": r, "version": VERSION})
+    return templates.TemplateResponse("guide.html", {
+        "request": r, "version": full_version()})
 
 @router.get("/about", response_class=HTMLResponse)
 async def ui_about(r: Request):
     c = storage.load_config()
     sz = storage.AUDIT_FILE.stat().st_size if storage.AUDIT_FILE.exists() else 0
     return templates.TemplateResponse("about.html", {
-        "request": r, "version": VERSION,
+        "request": r, "version": full_version(),
         "bootstrap_done": c.get("bootstrap_done", False),
         "telegram_enabled": c.get("telegram", {}).get("enabled", False),
         "smtp_enabled": c.get("smtp", {}).get("enabled", False),
