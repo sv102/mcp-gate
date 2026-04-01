@@ -20,6 +20,7 @@ import app_state
 import tasks
 import routes_ui
 import routes_admin
+import routes_onboarding
 from models import ExecReq
 
 log = logging.getLogger("mcp-gate")
@@ -44,6 +45,7 @@ if os.path.isdir("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 app.include_router(mcp_transport.router)
+app.include_router(routes_onboarding.router)
 # ═══ Auth middleware ═══
 _PUBLIC_PREFIXES = (
     "/health", "/static/", "/assets/", "/.well-known/",
@@ -241,25 +243,34 @@ async def admin_exec(req: ExecReq):
 async def api_approve(aid: str):
     it = storage.resolve_approval(aid, "approve")
     if not it:
-        raise HTTPException(404)
+        raise HTTPException(404, "Approval not found or already resolved")
     h = storage.get_host(it["host_id"])
     if not h:
-        raise HTTPException(404)
-    r = await asyncio.to_thread(executor.execute_with_secrets, h, it.get("resolved", it["command"]))
+        raise HTTPException(404, f"Host '{it['host_id']}' not found")
+    try:
+        r = await asyncio.to_thread(executor.execute_with_secrets, h, it.get("resolved", it["command"]))
+    except Exception as exc:
+        r = {"status": "error", "error": str(exc), "duration_ms": 0}
     e = {"host_id": it["host_id"], "command": it["command"], "source": "manual_approve",
-         "approval_id": aid, **r}
+         "approval_id": aid, "agent_id": it.get("agent_id", ""), **r}
     storage.append_audit(e)
     await app_state.ws_broadcast(e)
     return {"status": "approved", "result": r}
+
+
+@app.get("/api/admin/pending")
+async def api_get_pending():
+    """Return list of pending approval requests for nav badge init."""
+    return storage.get_pending_approvals()
 
 
 @app.post("/api/admin/reject/{aid}")
 async def api_reject(aid: str):
     it = storage.resolve_approval(aid, "reject")
     if not it:
-        raise HTTPException(404)
+        raise HTTPException(404, "Approval not found or already resolved")
     e = {"host_id": it["host_id"], "command": it["command"], "source": "manual_reject",
-         "approval_id": aid, "status": "rejected"}
+         "approval_id": aid, "agent_id": it.get("agent_id", ""), "status": "rejected"}
     storage.append_audit(e)
     await app_state.ws_broadcast(e)
     return {"status": "rejected"}
@@ -274,6 +285,8 @@ async def api_approval_status(aid: str):
     raise HTTPException(404)
 
 
+
+
 # ═══ WebSocket ═══
 
 @app.websocket("/ws/audit")
@@ -284,7 +297,7 @@ async def ws_audit(ws: WebSocket):
         while True:
             await asyncio.sleep(25)
             await ws.send_json({"ping": True})
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         app_state.ws_clients.discard(ws)

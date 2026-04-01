@@ -3,53 +3,59 @@
 {% extends "base.html" %}{% set page = 'approvals' %}
 {% block title %}Approvals{% endblock %}
 {% block content %}
-<h1 x-data x-text="$store.i18n?.t('approvals.title')||'Pending Approvals'"></h1>
 <div x-data="approvalsApp()" x-init="init()">
-  <template x-if="!pending.length">
-    <div class="card"><p class="text-muted" x-text="T('approvals.no_pending')||'No pending approvals.'"></p></div>
+  <div class="flex-between mb-2">
+    <h1>⏳ <span x-text="$store.i18n.t('approvals.title')"></span> (<span x-text="filtered.length"></span>)</h1>
+  </div>
+
+  <!-- Quick filters -->
+  <div class="flex mb-2" style="gap:6px;flex-wrap:wrap">
+    <button class="btn btn-sm" :class="!fHost&&!fMode?'btn-accent':''" @click="fHost='';fMode=''" x-text="$store.i18n.t('approvals.all')"></button>
+    <span style="border-left:1px solid var(--border);margin:0 4px"></span>
+    <template x-for="h in hostsList" :key="h">
+      <button class="btn btn-sm" :class="fHost===h?'btn-accent':''" @click="fHost=fHost===h?'':h" x-text="'🖥 '+h"></button>
+    </template>
+    <span style="border-left:1px solid var(--border);margin:0 4px"></span>
+    <button class="btn btn-sm" :class="fMode==='strict'?'btn-accent':''" @click="fMode=fMode==='strict'?'':'strict'" x-text="$store.i18n.t('approvals.strict_mode')"></button>
+    <button class="btn btn-sm" :class="fMode==='pessimistic'?'btn-accent':''" @click="fMode=fMode==='pessimistic'?'':'pessimistic'" x-text="$store.i18n.t('approvals.pessimistic_mode')"></button>
+    <button class="btn btn-sm" :class="fMode==='optimistic'?'btn-accent':''" @click="fMode=fMode==='optimistic'?'':'optimistic'" x-text="$store.i18n.t('approvals.optimistic_mode')"></button>
+  </div>
+
+  <template x-if="!filtered.length">
+    <div class="card"><p class="text-muted" x-text="$store.i18n.t('approvals.no_pending')"></p></div>
   </template>
-  <template x-for="p in pending" :key="p.approval_id">
-    <div class="card">
+  <template x-for="p in filtered" :key="p.approval_id">
+    <div class="card mb-2">
       <div class="flex-between">
         <div>
-          <span class="badge badge-pending" x-text="T('approvals.waiting')||'waiting'"></span>
+          <span class="badge badge-pending" x-text="$store.i18n.t('approvals.waiting')"></span>
           <code x-text="p.approval_id" style="margin-left:8px"></code>
-          <template x-if="isNewEvent(p.created_at)"><span class="badge-new" x-init="setTimeout(()=>{if($el)$el.classList.add('fade-out')},8000)">NEW</span></template>
+          <template x-if="isNewEvent(p.created_at)"><span class="badge-new">NEW</span></template>
         </div>
         <div class="flex">
-          <button class="btn btn-green btn-sm" @click="resolve(p.approval_id,'approve')" x-text="T('approvals.approve')||'Approve'"></button>
-          <button class="btn btn-red btn-sm" @click="resolve(p.approval_id,'reject')" x-text="T('approvals.reject')||'Reject'"></button>
+          <button class="btn btn-green btn-sm" @click="resolve(p.approval_id,'approve')" x-text="$store.i18n.t('approvals.approve')"></button>
+          <button class="btn btn-red btn-sm" @click="resolve(p.approval_id,'reject')" x-text="$store.i18n.t('approvals.reject')"></button>
         </div>
       </div>
       <div class="mt-2" style="font-size:13px">
-        <b x-text="(T('approvals.host')||'Host')+':'"></b> <code x-text="p.host_id"></code>
-        <b style="margin-left:12px" x-text="(T('approvals.command')||'Command')+':'"></b> <code x-text="p.command"></code>
-        <b style="margin-left:12px" x-text="(T('approvals.mode')||'Mode')+':'"></b> <span x-text="p.approval_mode"></span>
+        <b x-text="$store.i18n.t('approvals.host')+':'"></b> <code x-text="p.host_id"></code>
+        <b style="margin-left:12px" x-text="$store.i18n.t('approvals.command')+':'"></b> <code x-text="p.command"></code>
+        <b style="margin-left:12px" x-text="$store.i18n.t('approvals.mode')+':'"></b> <span x-text="p.approval_mode"></span>
       </div>
       <div class="mt-2 text-muted" style="font-size:12px">
-        <span x-text="(T('approvals.created')||'Created')+': '+ts(p.created_at)"></span>
+        <span x-text="$store.i18n.t('approvals.created')+': '+ts(p.created_at)"></span>
       </div>
-      <!-- Countdown bar: optimistic = green auto-approve, pessimistic = red auto-reject -->
       <template x-if="p.timeout>0&&p.approval_mode!=='strict'&&p.approval_mode!=='auto'">
         <div>
-          <div class="approval-bar">
-            <div class="approval-bar-fill"
-              :style="'width:'+Math.max(0,Math.min(100,((p.created_at+p.timeout-now)/p.timeout)*100))+'%;background:'+(p.approval_mode==='optimistic'?'var(--green)':'var(--red)')">
-            </div>
-          </div>
-          <div class="approval-outcome"
-            :style="'color:'+(p.approval_mode==='optimistic'?'var(--green)':'var(--red)')">
-            <span x-text="p.approval_mode==='optimistic'
-              ?(T('approvals.will_approve')||'\u2705 Auto-APPROVE in')
-              :(T('approvals.will_reject')||'\u274c Auto-REJECT in')"></span>
+          <div class="approval-bar"><div class="approval-bar-fill" :style="'width:'+Math.max(0,Math.min(100,((p.created_at+p.timeout-now)/p.timeout)*100))+'%;background:'+(p.approval_mode==='optimistic'?'var(--green)':'var(--red)')"></div></div>
+          <div class="approval-outcome" :style="'color:'+(p.approval_mode==='optimistic'?'var(--green)':'var(--red)')">
+            <span x-text="p.approval_mode==='optimistic'?$store.i18n.t('approvals.will_approve'):$store.i18n.t('approvals.will_reject')"></span>
             <b x-text="Math.max(0,Math.round(p.created_at+p.timeout-now))+'s'"></b>
           </div>
         </div>
       </template>
       <template x-if="p.approval_mode==='strict'">
-        <div class="approval-outcome" style="color:var(--yellow)">
-          <span x-text="T('approvals.no_timeout')||'\u23f3 No timeout \u2014 manual decision required'"></span>
-        </div>
+        <div class="approval-outcome" style="color:var(--yellow)" x-text="$store.i18n.t('approvals.no_timeout')"></div>
       </template>
     </div>
   </template>
@@ -60,39 +66,32 @@ function approvalsApp(){
   return{
     pending:{{ pending|tojson }},
     now:Date.now()/1000,
+    fHost:'',fMode:'',
+    get filtered(){
+      return this.pending.filter(p=>{
+        if(this.fHost&&p.host_id!==this.fHost)return false;
+        if(this.fMode&&p.approval_mode!==this.fMode)return false;
+        return true;
+      });
+    },
+    get hostsList(){return[...new Set(this.pending.map(p=>p.host_id))]},
     init(){
       setInterval(()=>this.now=Date.now()/1000,1000);
-      this._ws();
-      this._updateNavBadge();
+      this._ws();this._badge();
     },
     async resolve(aid,action){
-      try{
-        await api('POST','/api/admin/'+action+'/'+aid);
+      try{await api('POST','/api/admin/'+action+'/'+aid);
         this.pending=this.pending.filter(p=>p.approval_id!==aid);
-        toast(action==='approve'?(T('approvals.approved')||'Approved'):(T('approvals.rejected')||'Rejected'),3000,action==='approve'?'ok':'warn');
-        this._updateNavBadge();
+        toast(action==='approve'?T('approvals.approved'):T('approvals.rejected'),3000,action==='approve'?'ok':'warn');
+        this._badge();
       }catch(e){toast(e.message,4000,'err')}
     },
-    _updateNavBadge(){
-      const el=document.getElementById('nav-pending-count');
-      if(el){if(this.pending.length>0){el.textContent=this.pending.length;el.style.display='inline'}else{el.style.display='none'}}
-    },
+    _badge(){const el=document.getElementById('nav-pending-count');if(el){if(this.pending.length>0){el.textContent=this.pending.length;el.style.display='inline'}else{el.style.display='none'}}},
     _ws(){
       const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/audit');
-      ws.onmessage=e=>{
-        const d=JSON.parse(e.data);
-        if(d.ping)return;
-        // If new pending comes in, add it
-        if(d.status==='pending'&&d.approval_id){
-          this.pending.push(d);
-          toast((T('approvals.new_pending')||'New approval request: ')+d.command,5000,'warn');
-          this._updateNavBadge();
-        }
-        // If resolved, remove
-        if(d.approval_id&&(d.source==='manual_approve'||d.source==='manual_reject'||d.source==='auto_approve'||d.source==='auto_reject')){
-          this.pending=this.pending.filter(p=>p.approval_id!==d.approval_id);
-          this._updateNavBadge();
-        }
+      ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.ping)return;
+        if(d.status==='pending'&&d.approval_id){this.pending.push(d);toast(T('approvals.new_pending')+d.command,5000,'warn');this._badge()}
+        if(d.approval_id&&(d.source==='manual_approve'||d.source==='manual_reject'||d.source==='auto_approve'||d.source==='auto_reject')){this.pending=this.pending.filter(p=>p.approval_id!==d.approval_id);this._badge()}
       }
     }
   }

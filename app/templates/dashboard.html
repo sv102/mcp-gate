@@ -27,18 +27,18 @@
   <!-- Metrics: 24h + 7d -->
   <template x-if="m">
     <div class="grid-2 mb-2">
-      <a href="/audit" @click.prevent="goAudit('24h')" class="card" style="cursor:pointer;text-decoration:none;color:inherit;display:block"><h2 style="margin-top:0;font-size:14px" data-i18n="dashboard.24h">Last 24 hours</h2>
+      <a href="/audit" @click.prevent="goAudit('24h')" class="card" style="cursor:pointer;text-decoration:none;color:inherit;display:block"><h2 style="margin-top:0;font-size:14px" data-i18n="dashboard.24h" data-i18n="dashboard.24h">Last 24 hours</h2>
         <div class="grid-3">
-          <div class="stat-card"><div class="stat-num text-green" style="font-size:28px" x-text="m['24h'].ok"></div><div class="stat-label" data-i18n="dashboard.success">Success</div></div>
-          <div class="stat-card"><div class="stat-num" style="color:var(--orange)" x-text="m['24h'].blocked"></div><div class="stat-label" data-i18n="dashboard.blocked">Blocked</div></div>
-          <div class="stat-card"><div class="stat-num text-red" x-text="m['24h'].error"></div><div class="stat-label" data-i18n="dashboard.errors">Errors</div></div>
+          <div class="stat-card"><div class="stat-num text-green" style="font-size:28px" x-text="m['24h'].ok"></div><div class="stat-label" data-i18n="dashboard.success" data-i18n="dashboard.success">Success</div></div>
+          <div class="stat-card"><div class="stat-num" style="color:var(--orange)" x-text="m['24h'].blocked"></div><div class="stat-label" data-i18n="dashboard.blocked" data-i18n="dashboard.blocked">Blocked</div></div>
+          <div class="stat-card"><div class="stat-num text-red" x-text="m['24h'].error"></div><div class="stat-label" data-i18n="dashboard.errors" data-i18n="dashboard.errors">Errors</div></div>
         </div>
       </a>
-      <a href="/audit" @click.prevent="goAudit('7d')" class="card" style="cursor:pointer;text-decoration:none;color:inherit;display:block"><h2 style="margin-top:0;font-size:14px" data-i18n="dashboard.7d">Last 7 days</h2>
+      <a href="/audit" @click.prevent="goAudit('7d')" class="card" style="cursor:pointer;text-decoration:none;color:inherit;display:block"><h2 style="margin-top:0;font-size:14px" data-i18n="dashboard.7d" data-i18n="dashboard.7d">Last 7 days</h2>
         <div class="grid-3">
-          <div class="stat-card"><div class="stat-num text-green" style="font-size:28px" x-text="m['7d'].ok"></div><div class="stat-label" data-i18n="dashboard.success">Success</div></div>
-          <div class="stat-card"><div class="stat-num" style="color:var(--orange)" x-text="m['7d'].blocked"></div><div class="stat-label" data-i18n="dashboard.blocked">Blocked</div></div>
-          <div class="stat-card"><div class="stat-num text-red" x-text="m['7d'].error"></div><div class="stat-label" data-i18n="dashboard.errors">Errors</div></div>
+          <div class="stat-card"><div class="stat-num text-green" style="font-size:28px" x-text="m['7d'].ok"></div><div class="stat-label" data-i18n="dashboard.success" data-i18n="dashboard.success">Success</div></div>
+          <div class="stat-card"><div class="stat-num" style="color:var(--orange)" x-text="m['7d'].blocked"></div><div class="stat-label" data-i18n="dashboard.blocked" data-i18n="dashboard.blocked">Blocked</div></div>
+          <div class="stat-card"><div class="stat-num text-red" x-text="m['7d'].error"></div><div class="stat-label" data-i18n="dashboard.errors" data-i18n="dashboard.errors">Errors</div></div>
         </div>
       </a>
     </div>
@@ -46,7 +46,7 @@
 
   <!-- Agents -->
   <div class="card mb-2">
-    <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.agents">Agents</h2><a href="/agents" class="btn btn-sm">Manage →</a></div>
+    <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.agents">Agents</h2><a href="/agents" class="btn btn-sm" data-i18n="dashboard.manage">Manage →</a></div>
     <div class="dash-tiles">
       <template x-for="a in agents" :key="a.id">
         <div class="dash-tile" :class="a.enabled?'':'disabled'">
@@ -74,7 +74,7 @@
   <div class="grid-2">
     <!-- Hosts -->
     <div class="card">
-      <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.hosts">Hosts</h2><a href="/hosts" class="btn btn-sm">Manage →</a></div>
+      <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.hosts">Hosts</h2><a href="/hosts" class="btn btn-sm" data-i18n="dashboard.manage">Manage →</a></div>
       <div style="display:grid;gap:8px">
         <template x-for="h in hosts" :key="h.id">
           <div class="dash-tile" :class="h.enabled?'':'disabled'">
@@ -110,6 +110,8 @@
                   <option value="optimistic">optimistic</option><option value="strict">strict</option>
                 </select>
                 <button class="btn btn-sm" @click="testHost(h.id)" data-tip="SSH test">🔌</button>
+                <button class="btn btn-sm" @click="downloadSetup(h)" data-tip="Setup">📋</button>
+                <button class="btn btn-sm" @click="downloadSetup(h)" data-tip="Setup script">📋</button>
               </div>
             </div>
           </div>
@@ -122,7 +124,7 @@
 
     <!-- Approvals -->
     <div class="card">
-      <h2 style="margin-top:0" data-i18n="dashboard.pending_approvals">Approvals (<span x-text="pending.length"></span>)</h2>
+      <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.pending_approvals">Approvals (<span x-text="pending.length"></span>)</h2><a href="/approvals" class="btn btn-sm" data-i18n="dashboard.approvals_page">Approvals →</a></div>
       <template x-for="p in pending" :key="p.approval_id">
         <div class="dash-tile" style="margin-bottom:8px">
           <div class="flex-between">
@@ -140,21 +142,21 @@
           </template>
         </div>
       </template>
-      <p x-show="pending.length===0" class="text-muted" style="text-align:center;padding:16px;font-size:13px" x-text="T('approvals.no_pending')||'No pending'"></p>
+      <p x-show="pending.length===0" class="text-muted" style="text-align:center;padding:16px;font-size:13px" x-text="$store.i18n.t('approvals.no_pending')"></p>
     </div>
   </div>
 
   <!-- Recent activity -->
   <div class="card">
-    <div class="flex-between"><h2 style="margin-top:0" data-i18n="dashboard.recent">Recent Activity</h2><a href="/audit" class="btn btn-sm">Audit Log →</a></div>
-    <table><thead><tr><th>Time</th><th>Host</th><th>Agent</th><th>Command</th><th>Source</th><th>Status</th><th>Duration</th></tr></thead><tbody>
+    <div class="flex-between"><h2 style="margin-top:0" data-i18n="dashboard.recent">Recent Activity</h2><a href="/audit" class="btn btn-sm" data-i18n="dashboard.audit_log">Audit Log →</a></div>
+    <table><thead><tr><th data-i18n="dashboard.time">Time</th><th data-i18n="dashboard.source">Source</th><th data-i18n="dashboard.host">Host</th><th data-i18n="dashboard.command">Command</th><th data-i18n="dashboard.status">Status</th><th data-i18n="dashboard.duration">Duration</th></tr></thead><tbody>
       <template x-for="e in recent" :key="e.id||e.ts">
         <tr>
           <td class="text-muted" style="font-size:11px;white-space:nowrap"><span x-text="ts(e.ts)"></span><span x-show="isNewEvent(e.ts)" class="badge-new" x-init="setTimeout(()=>{if($el)$el.classList.add('fade-out')},8000)">NEW</span></td>
+          <td style="font-size:12px" x-text="e.agent_id||e.source||'—'"></td>
           <td><code x-text="e.host_id||'-'"></code></td>
-          <td class="text-muted" style="font-size:11px" x-text="e.agent_id||'—'"></td>
           <td><code x-text="e.command||'-'" style="max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis"></code></td>
-          <td style="font-size:12px" x-text="e.source||'-'"></td>
+          
           <td x-html="badge(e.status||'?')"></td>
           <td style="font-size:12px" x-text="e.duration_ms?e.duration_ms+'ms':'—'"></td>
         </tr>
@@ -182,6 +184,8 @@ function dashApp(){
     pingTip(id){const p=this.pings[id];if(!p)return'Checking...';return(p.ok?'🟢 Online':'🔴 Offline')+'\n'+p.msg+'\nPing: '+p.ms+'ms\n'+new Date(p.ts*1000).toLocaleTimeString()},
     async toggleHost(h){try{const r=await api('POST','/api/admin/hosts/'+h.id+'/toggle');h.enabled=r.enabled;toast(h.id+': '+(r.enabled?'on':'off'),3000,r.enabled?'ok':'warn')}catch(e){toast(e.message,4000,'err')}},
     async changeMode(h,mode){try{await api('PUT','/api/admin/hosts/'+h.id+'/mode',{mode});h.approval_mode=mode;toast(h.id+': '+mode,3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async downloadSetup(h){try{const r=await api('GET','/api/admin/hosts/'+h.id+'/setup-script');const blob=new Blob([r.script],{type:'text/x-sh'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='setup-'+h.id+'.sh';a.click();URL.revokeObjectURL(url);toast('Setup script: setup-'+h.id+'.sh',3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+    async downloadSetup(h){try{const r=await api('GET','/api/admin/hosts/'+h.id+'/setup-script');const blob=new Blob([r.script],{type:'text/x-sh'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='setup-'+h.id+'.sh';a.click();URL.revokeObjectURL(url);toast('setup-'+h.id+'.sh',3000,'ok')}catch(e){toast(e.message,4000,'err')}},
     async testHost(id){toast('SSH...',2000,'info');try{const r=await api('POST','/api/admin/hosts/'+id+'/test');toast(id+': '+(r.ok?'OK':'Error: '+r.message),4000,r.ok?'ok':'err')}catch(e){toast(e.message,4000,'err')}},
     async resolve(aid,action){try{await api('POST','/api/admin/'+action+'/'+aid);this.pending=this.pending.filter(p=>p.approval_id!==aid);toast(action==='approve'?'Approved':'Rejected',3000,action==='approve'?'ok':'warn')}catch(e){toast(e.message,4000,'err')}},
     _updateNavBadge(){const el=document.getElementById('nav-pending-count');if(el){if(this.pending.length>0){el.textContent=this.pending.length;el.style.display='inline'}else{el.style.display='none'}}},
@@ -190,7 +194,7 @@ function dashApp(){
     getSetType(sid){return this.sets.find(s=>s.id===sid)?.type||'allow'},
     _ws(){
       const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/audit');
-      ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.ping)return;this.recent.unshift(d);if(this.recent.length>20)this.recent.pop();
+      ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.ping)return;this.recent.unshift(d);if(this.recent.length>20)this.recent.pop();if(d.status==='pending'&&d.approval_id){this.pending.push(d);this._updateNavBadge();toast('⏳ '+T('approvals.new_pending')+' — '+d.command,5000,'warn')}if(d.approval_id&&(d.source==='manual_approve'||d.source==='manual_reject'||d.source==='auto_approve'||d.source==='auto_reject'||d.auto_resolved)){this.pending=this.pending.filter(p=>p.approval_id!==d.approval_id);this._updateNavBadge()}
         d._new=true;setTimeout(()=>d._new=false,10000);if(d.status==='blocked')toast('Blocked: '+d.command,4000,'warn');
         else if(d.status==='error')toast('Error: '+(d.error||d.command),4000,'err');
       }
