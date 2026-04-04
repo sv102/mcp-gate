@@ -23,13 +23,13 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
 </style>
 <div x-data="agentsApp()" x-init="init()">
   <div class="flex-between mb-4">
-    <h1>🤖 Agents</h1>
+    <h1 data-i18n="agents.title">🤖 Agents</h1>
     <div class="flex">
       <div class="action-bar">
-        <button class="ab ab-import" @click="showImport=true">📥 Import</button>
-        <button class="ab ab-export" @click="exportAll()">📤 Export</button>
+        <button class="ab ab-import" @click="showImport=true">📥 <span data-i18n="common.import">Import</span></button>
+        <button class="ab ab-export" @click="exportAll()">📤 <span data-i18n="common.export">Export</span></button>
         <span class="sep"></span>
-        <button class="ab ab-add" @click="reset();showAdd=true;editing=false">+ Add Agent</button>
+        <button class="ab ab-add" @click="reset();showAdd=true;editing=false">+ <span data-i18n="agents.add">Add Agent</span></button>
       </div>
     </div>
   </div>

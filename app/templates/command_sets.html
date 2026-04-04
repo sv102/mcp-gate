@@ -18,10 +18,10 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
     <h1>📦 Command Sets</h1>
     <div class="flex">
       <div class="action-bar">
-        <button class="ab ab-import" @click="showImport=true">📥 Import</button>
-        <button class="ab ab-export" @click="exportAll()">📤 Export</button>
+        <button class="ab ab-import" @click="showImport=true">📥 <span data-i18n="common.import">Import</span></button>
+        <button class="ab ab-export" @click="exportAll()">📤 <span data-i18n="common.export">Export</span></button>
         <span class="sep"></span>
-        <button class="ab ab-add" @click="reset();showAdd=true;editing=false">+ Create Set</button>
+        <button class="ab ab-add" @click="reset();showAdd=true;editing=false">+ <span data-i18n="command_sets.create">Create Set</span></button>
       </div>
     </div>
   </div>

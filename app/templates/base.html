@@ -129,7 +129,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 let _ac=null;function _getAC(){if(!_ac)try{_ac=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}return _ac}
 function _b(f,d,v){try{const ac=_getAC();if(!ac)return;const o=ac.createOscillator(),g=ac.createGain();o.connect(g);g.connect(ac.destination);o.frequency.value=f;o.type='sine';g.gain.value=v||.08;o.start();o.stop(ac.currentTime+d)}catch(e){}}
 function _snd(t){if(t==='ok')_b(880,.08);else if(t==='err'){_b(330,.12);setTimeout(()=>_b(260,.15),130)}else if(t==='warn')_b(660,.1);else _b(740,.06)}
-function toast(m,ms,t){ms=ms||3500;t=t||'info';_snd(t);_browserNotify('MCP Gate',m);const c=document.getElementById('toasts'),ic={ok:'✅',err:'❌',warn:'⚠️',info:'ℹ️'},cl={ok:'toast-ok',err:'toast-err',warn:'toast-warn',info:'toast-info'},d=document.createElement('div');d.className='toast '+(cl[t]||'toast-info');d.innerHTML='<span class="toast-icon">'+(ic[t]||'ℹ️')+'</span><div class="toast-body"><div class="toast-msg">'+m+'</div></div><span class="toast-close" onclick="this.parentElement.classList.add(\'removing\');setTimeout(()=>this.parentElement.remove(),300)">&times;</span>';c.appendChild(d);setTimeout(()=>{d.classList.add('removing');setTimeout(()=>d.remove(),300)},ms)}
+function toast(m,ms,t){ms=ms||(window._toastDuration||3500);t=t||'info';_snd(t);_browserNotify('MCP Gate',m);const c=document.getElementById('toasts'),ic={ok:'✅',err:'❌',warn:'⚠️',info:'ℹ️'},cl={ok:'toast-ok',err:'toast-err',warn:'toast-warn',info:'toast-info'},d=document.createElement('div');d.className='toast '+(cl[t]||'toast-info');d.innerHTML='<span class="toast-icon">'+(ic[t]||'ℹ️')+'</span><div class="toast-body"><div class="toast-msg">'+m+'</div></div><span class="toast-close" onclick="this.parentElement.classList.add(\'removing\');setTimeout(()=>this.parentElement.remove(),300)">&times;</span>';c.appendChild(d);setTimeout(()=>{d.classList.add('removing');setTimeout(()=>d.remove(),300)},ms)}
 async function api(m,u,b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||e.reason||r.statusText)}return r.json()}
 function ts(e){if(!e)return'—';return new Date(e*1000).toLocaleString()}
 function badge(s){const m={ok:'badge-ok',error:'badge-err',blocked:'badge-block',pending:'badge-pending',dry_run:'badge-warn',rejected:'badge-err'},l={ok:'OK',error:'err',blocked:'block',pending:'pend',dry_run:'test',rejected:'rej'};return'<span class="badge '+(m[s]||'')+'">'+(l[s]||s)+'</span>'}
@@ -149,7 +149,7 @@ async function uploadFile(f){const fd=new FormData();fd.append('file',f);const r
     if(a.panel_opacity!==undefined)r.setProperty('--panel-opacity',a.panel_opacity);
     if(a.bg_image)document.body.style.backgroundImage='url('+a.bg_image+')';
     for(const k of['btn_primary','btn_success','btn_danger','btn_info','btn_warning'])if(a[k])r.setProperty('--'+k.replace(/_/g,'-'),a[k]);
-    const lang=inst.language||'ru';
+    const lang=inst.language||'ru';window._toastDuration=inst.toast_duration?inst.toast_duration*1000:3500;
     const i=await fetch('/api/i18n/'+lang).then(r=>r.json());
     if(i.nav){
       const m={dashboard:'nl-dashboard',agents:'nl-agents',hosts:'nl-hosts',command_sets:'nl-sets',console:'nl-console',secrets:'nl-secrets',audit:'nl-audit',approvals:'nl-approvals',alerts:'nl-alerts',settings:'nl-settings',appearance:'nl-appearance',guide:'nl-guide',about:'nl-about',logout:'nl-logout'};
@@ -158,7 +158,7 @@ async function uploadFile(f){const fd=new FormData();fd.append('file',f);const r
       if(i.nav.section_security)document.getElementById('ns-security').textContent=i.nav.section_security;
       if(i.nav.section_system)document.getElementById('ns-system').textContent=i.nav.section_system;
     }
-    window._i18n=i;window._lang=lang;try{Alpine.store('i18n').data=i}catch(e){}
+    window._i18n=i;window._lang=lang;try{Alpine.store('i18n').data=i}catch(e){}setTimeout(_applyI18n,50);setTimeout(_applyI18n,300)
   }catch(e){console.warn('Theme/i18n:',e)}
 })();
 document.addEventListener('alpine:init',()=>{
@@ -176,6 +176,58 @@ function _applyI18n(){
   document.querySelectorAll('[data-i18n-tip]').forEach(el=>{const v=t(el.dataset.i18nTip);if(v)el.setAttribute('data-tip',v)});
 }
 setTimeout(_applyI18n,100);
+
+/* ═══ Global WS — nav pending badge + approval sound on all pages ═══ */
+(function(){
+  let _pendingCount=0;
+  function _updatePendingBadge(n){
+    _pendingCount=n;
+    const el=document.getElementById('nav-pending-count');
+    if(el){if(n>0){el.textContent=n;el.style.display='inline'}else{el.style.display='none'}}
+    // Also update tab title
+    document.title=n>0?'('+n+') MCP Gate':'MCP Gate';
+  }
+  function _approvalSound(){
+    // Distinctive 3-tone rising alert for new approval
+    const ac=_getAC();if(!ac)return;
+    const now=ac.currentTime;
+    [[523,.1],[659,.1],[784,.15]].forEach(([f,d],i)=>{
+      const o=ac.createOscillator(),g=ac.createGain();
+      o.type='triangle';o.frequency.value=f;
+      g.gain.setValueAtTime(0.15,now+i*0.12);
+      g.gain.exponentialRampToValueAtTime(0.001,now+i*0.12+d);
+      o.connect(g);g.connect(ac.destination);
+      o.start(now+i*0.12);o.stop(now+i*0.12+d+0.01);
+    });
+  }
+  // Fetch initial pending count
+  fetch('/api/admin/pending').then(r=>r.json()).then(d=>{
+    _updatePendingBadge(Array.isArray(d)?d.length:0);
+  }).catch(()=>{});
+  // Global WebSocket
+  function _globalWS(){
+    const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/audit');
+    ws.onmessage=function(ev){
+      try{
+        const d=JSON.parse(ev.data);
+        if(d.ping)return;
+        if(d.status==='pending'&&d.approval_id){
+          _pendingCount++;
+          _updatePendingBadge(_pendingCount);
+          _approvalSound();
+          _browserNotify('MCP Gate — Approval Required', d.host_id+': '+d.command);
+        }
+        if(d.approval_id&&(d.source==='manual_approve'||d.source==='manual_reject'||d.source==='auto_approve'||d.source==='auto_reject'||d.auto_resolved)){
+          _pendingCount=Math.max(0,_pendingCount-1);
+          _updatePendingBadge(_pendingCount);
+        }
+      }catch(e){}
+    };
+    ws.onclose=function(){setTimeout(_globalWS,3000)};
+    ws.onerror=function(){ws.close()};
+  }
+  _globalWS();
+})();
 </script>
 {% block scripts %}{% endblock %}
 <script>

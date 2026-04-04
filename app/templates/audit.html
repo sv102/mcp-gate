@@ -1,124 +1,122 @@
 {# SPDX-License-Identifier: AGPL-3.0-or-later #}
 {# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102) — https://github.com/sv102/mcp-gate #}
 {% extends "base.html" %}{% set page = 'audit' %}
-{% block title %}Audit Log{% endblock %}
+{% block title %}Audit{% endblock %}
 {% block content %}
 <div x-data="auditApp()" x-init="init()">
   <div class="flex-between mb-2">
-    <h1 data-i18n="audit.title">Audit Log</h1>
-    <div class="flex">
-      <label class="flex" style="gap:6px;font-size:13px" data-tip="Auto-update on new events" data-tip-left><input type="checkbox" x-model="live"> Live</label>
-      <div class="action-bar">
-        <button class="ab ab-neutral" @click="setRange('24h')">24h</button>
-        <button class="ab ab-neutral" @click="setRange('7d')">7d</button>
-        <span class="sep"></span>
-        <button class="ab ab-export" @click="copyAll()">📋 Copy</button>
-        <button class="ab ab-export" @click="exportFile('json')">📥 JSON</button>
-        <button class="ab ab-export" @click="exportFile('csv')">📥 CSV</button>
-        <span class="sep"></span>
-        <button class="ab ab-danger" @click="clearAudit()">🗑 Clear</button>
-      </div>
+    <h1>📋 <span x-text="$store.i18n.t('audit.title')"></span></h1>
+    <div class="action-bar">
+      <button class="ab ab-neutral" @click="copyAll()" :data-tip="$store.i18n.t('audit.copy_tip')">📋 <span x-text="$store.i18n.t('audit.copy_btn')"></span></button>
+      <button class="ab ab-export" @click="exportFile('json')">📥 JSON</button>
+      <button class="ab ab-export" @click="exportFile('csv')">📥 CSV</button>
+      <span class="sep"></span>
+      <button class="ab ab-danger" @click="clearAudit()">🗑 <span x-text="$store.i18n.t('audit.clear_log')"></span></button>
     </div>
   </div>
 
   <!-- Quick filter chips -->
   <div class="flex mb-2" style="gap:6px;flex-wrap:wrap">
-    <button class="btn btn-sm" :class="!f.status&&!f.source?'btn-accent':''" @click="resetFilters()">All</button>
+    <button class="btn btn-sm" :class="!f.status&&!f.source&&!f.period?'btn-accent':''" @click="resetFilters()" x-text="$store.i18n.t('audit.all')"></button>
     <button class="btn btn-sm" :class="f.status==='ok'?'btn-accent':''" @click="quickFilter('status','ok')">✅ OK</button>
-    <button class="btn btn-sm" :class="f.status==='blocked'?'btn-accent':''" @click="quickFilter('status','blocked')">🚫 Blocked</button>
-    <button class="btn btn-sm" :class="f.status==='error'?'btn-accent':''" @click="quickFilter('status','error')">❌ Error</button>
+    <button class="btn btn-sm" :class="f.status==='blocked'?'btn-accent':''" @click="quickFilter('status','blocked')" x-text="'🚫 '+$store.i18n.t('audit.blocked_opt')"></button>
+    <button class="btn btn-sm" :class="f.status==='error'?'btn-accent':''" @click="quickFilter('status','error')" x-text="'❌ '+$store.i18n.t('audit.error_opt')"></button>
+    <span style="border-left:1px solid var(--border);margin:0 4px"></span>
+    <button class="btn btn-sm" :class="f.period==='24h'?'btn-accent':''" @click="setPeriod('24h')" x-text="$store.i18n.t('audit.period_24h')"></button>
+    <button class="btn btn-sm" :class="f.period==='7d'?'btn-accent':''" @click="setPeriod('7d')" x-text="$store.i18n.t('audit.period_7d')"></button>
     <span style="border-left:1px solid var(--border);margin:0 4px"></span>
     <template x-for="a in agentsList" :key="a">
       <button class="btn btn-sm" :class="f.source===a?'btn-accent':''" @click="quickFilter('source',a)" x-text="'🤖 '+a"></button>
     </template>
-    <button class="btn btn-sm" :class="f.source==='admin_console'?'btn-accent':''" @click="quickFilter('source','admin_console')">⌨ Console</button>
+    <button class="btn btn-sm" :class="f.source==='admin'?'btn-accent':''" @click="quickFilter('source','admin')" x-text="'🖥 '+$store.i18n.t('audit.system_events')"></button>
+    <button class="btn btn-sm" :class="f.source==='admin_console'?'btn-accent':''" @click="quickFilter('source','admin_console')" x-text="'⌨ '+$store.i18n.t('audit.console_events')"></button>
   </div>
 
-  <!-- Advanced filters (collapsible) -->
+  <!-- Advanced filters -->
   <details class="card mb-2" style="padding:0">
     <summary style="padding:10px 14px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text2);user-select:none">
-      🔍 Advanced Filters
-      <span x-show="filtersActive()" style="color:var(--accent);font-size:11px;margin-left:8px">● active</span>
+      🔍 <span x-text="$store.i18n.t('audit.advanced')"></span>
+      <span x-show="filtersActive()" style="color:var(--accent);font-size:11px;margin-left:8px">● <span x-text="$store.i18n.t('audit.filters_active')"></span></span>
     </summary>
     <div style="padding:4px 14px 14px">
       <div class="flex-wrap" style="gap:12px">
         <div>
-          <label style="font-size:11px;color:var(--text2)">Host</label>
+          <label style="font-size:11px;color:var(--text2)" x-text="$store.i18n.t('audit.host')"></label>
           <select x-model="f.host_id" @change="load()" style="font-size:12px;width:130px">
-            <option value="">All</option>
+            <option value="" x-text="$store.i18n.t('audit.all')"></option>
             <template x-for="h in hostsList" :key="h"><option :value="h" x-text="h"></option></template>
           </select>
         </div>
         <div>
-          <label style="font-size:11px;color:var(--text2)">Status</label>
+          <label style="font-size:11px;color:var(--text2)" x-text="$store.i18n.t('audit.status')"></label>
           <select x-model="f.status" @change="load()" style="font-size:12px;width:120px">
-            <option value="">All</option>
-            <option value="ok">OK</option><option value="blocked">Blocked</option>
-            <option value="error">Error</option><option value="pending">Pending</option>
-            <option value="rejected">Rejected</option><option value="dry_run">Dry run</option>
+            <option value="" x-text="$store.i18n.t('audit.all')"></option>
+            <option value="ok">OK</option>
+            <option value="blocked" x-text="$store.i18n.t('audit.blocked_opt')"></option>
+            <option value="error" x-text="$store.i18n.t('audit.error_opt')"></option>
+            <option value="pending" x-text="$store.i18n.t('audit.pending_opt')"></option>
+            <option value="rejected" x-text="$store.i18n.t('audit.rejected_opt')"></option>
           </select>
         </div>
         <div>
-          <label style="font-size:11px;color:var(--text2)">Source / Agent</label>
+          <label style="font-size:11px;color:var(--text2)" x-text="$store.i18n.t('audit.source')"></label>
           <select x-model="f.source" @change="load()" style="font-size:12px;width:140px">
-            <option value="">All</option>
+            <option value="" x-text="$store.i18n.t('audit.all')"></option>
             <template x-for="s in sourcesList" :key="s"><option :value="s" x-text="s"></option></template>
           </select>
         </div>
         <div>
-          <label style="font-size:11px;color:var(--text2)">Group</label>
+          <label style="font-size:11px;color:var(--text2)" x-text="$store.i18n.t('audit.group')"></label>
           <select x-model="f.group" @change="load()" style="font-size:12px;width:120px">
-            <option value="">All</option>
+            <option value="" x-text="$store.i18n.t('audit.all')"></option>
             <template x-for="g in groupsList" :key="g"><option :value="g" x-text="g"></option></template>
           </select>
         </div>
         <div>
-          <label style="font-size:11px;color:var(--text2)">From</label>
+          <label style="font-size:11px;color:var(--text2)" x-text="$store.i18n.t('audit.from')"></label>
           <input type="datetime-local" x-model="f.dateFrom" @change="load()" style="font-size:12px;width:180px">
         </div>
         <div>
-          <label style="font-size:11px;color:var(--text2)">To</label>
+          <label style="font-size:11px;color:var(--text2)" x-text="$store.i18n.t('audit.to')"></label>
           <input type="datetime-local" x-model="f.dateTo" @change="load()" style="font-size:12px;width:180px">
         </div>
         <div>
-          <label style="font-size:11px;color:var(--text2)">Entries</label>
+          <label style="font-size:11px;color:var(--text2)" x-text="$store.i18n.t('audit.entries_label')"></label>
           <select x-model.number="f.limit" @change="load()" style="font-size:12px;width:80px">
             <option value="50">50</option><option value="100">100</option><option value="200">200</option><option value="500">500</option><option value="1000">1000</option>
           </select>
         </div>
         <div style="display:flex;align-items:flex-end">
-          <button class="btn btn-sm" @click="resetFilters()">❌ Reset</button>
+          <button class="btn btn-sm" @click="resetFilters()" x-text="'❌ '+$store.i18n.t('audit.reset_filters')"></button>
         </div>
       </div>
     </div>
   </details>
 
-  <!-- Results count -->
+  <!-- Count -->
   <div class="flex-between mb-1" style="font-size:12px">
-    <span class="text-muted">Shown: <b x-text="entries.length"></b> entries</span>
+    <span class="text-muted"><span x-text="$store.i18n.t('audit.shown')"></span>: <b x-text="entries.length"></b></span>
   </div>
 
   <!-- Table -->
   <div class="card" style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th style="width:155px">Time</th>
-        <th>Host</th>
-        <th>Agent</th>
-        <th>Command</th>
-        <th>Source</th>
-        <th>Status</th>
-        <th>Duration</th>
+        <th style="width:155px" x-text="$store.i18n.t('audit.time')"></th>
+        <th x-text="$store.i18n.t('audit.source')"></th>
+        <th x-text="$store.i18n.t('audit.host')"></th>
+        <th x-text="$store.i18n.t('audit.command')"></th>
+        <th x-text="$store.i18n.t('audit.status')"></th>
+        <th x-text="$store.i18n.t('audit.duration')"></th>
         <th style="width:40px"></th>
       </tr></thead>
       <tbody>
         <template x-for="e in entries" :key="e.id||e.ts">
           <tr>
             <td class="text-muted" style="font-size:11px;white-space:nowrap"><span x-text="ts(e.ts)"></span><span x-show="isNewEvent(e.ts)" class="badge-new">NEW</span></td>
+            <td style="font-size:12px;cursor:pointer" @click="quickFilter('source',e.agent_id||e.source)" x-text="e.agent_id||e.source||'—'"></td>
             <td><code style="font-size:12px;cursor:pointer" x-text="e.host_id||'-'" @click="quickFilter('host_id',e.host_id)"></code></td>
-            <td style="font-size:11px;color:var(--text2);cursor:pointer" x-text="e.agent_id||'—'" @click="e.agent_id&&quickFilter('source',e.agent_id)"></td>
-            <td><code x-text="e.command||'-'" style="max-width:250px;display:inline-block;overflow:hidden;text-overflow:ellipsis;cursor:pointer" @click="copyText(e.command)" data-tip="Click to copy"></code></td>
-            <td style="font-size:11px;cursor:pointer" x-text="e.source||'-'" @click="quickFilter('source',e.source)"></td>
+            <td><code x-text="e.command||'-'" style="max-width:300px;display:inline-block;overflow:hidden;text-overflow:ellipsis;cursor:pointer" @click="copyText(e.command)" :data-tip="$store.i18n.t('audit.click_copy')"></code></td>
             <td x-html="badge(e.status||'?')"></td>
             <td x-text="e.duration_ms?e.duration_ms+'ms':'—'" style="font-size:12px"></td>
             <td><button class="btn-icon" style="font-size:11px" @click="showDetail(e)">🔍</button></td>
@@ -126,9 +124,7 @@
         </template>
       </tbody>
     </table>
-    <div x-show="entries.length===0" class="text-muted" style="text-align:center;padding:24px;font-size:13px">
-      No entries matching selected filters.
-    </div>
+    <div x-show="entries.length===0" class="text-muted" style="text-align:center;padding:24px;font-size:13px" x-text="$store.i18n.t('audit.no_entries')"></div>
   </div>
 
   <!-- Detail Modal -->
@@ -136,11 +132,11 @@
     <div class="overlay" @click.self="detail=null">
       <div class="modal" style="position:relative;max-width:600px">
         <button class="modal-close" @click="detail=null">&times;</button>
-        <h2>Entry Details</h2>
+        <h2 x-text="$store.i18n.t('audit.entry_detail')"></h2>
         <pre style="font-size:12px;max-height:60vh;overflow:auto;white-space:pre-wrap" x-text="JSON.stringify(detail,null,2)"></pre>
         <div class="flex mt-4">
-          <button class="btn btn-sm" @click="copyText(JSON.stringify(detail,null,2))">Copy JSON</button>
-          <button class="btn btn-sm" @click="detail=null">Close</button>
+          <button class="btn btn-sm" @click="copyText(JSON.stringify(detail,null,2))" x-text="$store.i18n.t('audit.copy_json')"></button>
+          <button class="btn btn-sm" @click="detail=null" x-text="$store.i18n.t('common.close')"></button>
         </div>
       </div>
     </div>
@@ -149,25 +145,33 @@
 {% endblock %}
 {% block scripts %}<script>
 function auditApp(){
+  const _t=k=>Alpine.store('i18n')?.t(k)||k;
   return{
     entries:[],live:true,detail:null,hostsList:[],groupsList:[],agentsList:[],sourcesList:[],
-    f:{host_id:'',status:'',source:'',group:'',dateFrom:'',dateTo:'',limit:200},
+    f:{host_id:'',status:'',source:'',group:'',dateFrom:'',dateTo:'',limit:200,period:''},
     async init(){
       const _h=window.location.hash;
-      if(_h){const _p=new URLSearchParams(_h.slice(1));const _r=_p.get('range');if(_r==='24h'){this.f.dateFrom=new Date(Date.now()-86400000).toISOString().slice(0,16)}else if(_r==='7d'){this.f.dateFrom=new Date(Date.now()-7*86400000).toISOString().slice(0,16)}}
+      if(_h){
+        const _p=new URLSearchParams(_h.slice(1));
+        const _r=_p.get('range');
+        if(_r)this.setPeriod(_r,true);
+      }
       await this.load();
-      try{
-        const hosts=await api('GET','/api/admin/hosts');
-        this.hostsList=[...new Set(hosts.map(h=>h.id))];
-        this.groupsList=[...new Set(hosts.map(h=>h.group).filter(Boolean))];
-      }catch(e){}
-      try{
-        const agents=await api('GET','/api/admin/agents');
-        this.agentsList=agents.map(a=>a.id);
-      }catch(e){}
-      // Build sources list from entries
+      try{const hosts=await api('GET','/api/admin/hosts');this.hostsList=[...new Set(hosts.map(h=>h.id))];this.groupsList=[...new Set(hosts.map(h=>h.group).filter(Boolean))]}catch(e){}
+      try{const agents=await api('GET','/api/admin/agents');this.agentsList=agents.map(a=>a.id)}catch(e){}
       this.sourcesList=[...new Set(this.entries.map(e=>e.source).filter(Boolean))].sort();
       this._ws();
+    },
+    setPeriod(p,noLoad){
+      if(this.f.period===p&&!noLoad){this.f.period='';this.f.dateFrom='';this.f.dateTo=''}
+      else{
+        this.f.period=p;
+        const now=new Date();
+        const ms=p==='24h'?86400000:7*86400000;
+        this.f.dateFrom=new Date(now-ms).toISOString().slice(0,16);
+        this.f.dateTo='';
+      }
+      if(!noLoad)this.load();
     },
     async load(){
       const p=new URLSearchParams();
@@ -183,22 +187,27 @@ function auditApp(){
     },
     filtersActive(){return !!(this.f.host_id||this.f.status||this.f.source||this.f.group||this.f.dateFrom||this.f.dateTo)},
     quickFilter(key,val){
+      if(key!=='period')this.f.period='';
       if(this.f[key]===val){this.f[key]=''}else{this.f[key]=val}
       this.load();
     },
-    resetFilters(){this.f={host_id:'',status:'',source:'',group:'',dateFrom:'',dateTo:'',limit:200};this.load()},
+    resetFilters(){this.f={host_id:'',status:'',source:'',group:'',dateFrom:'',dateTo:'',limit:200,period:''};this.load()},
     showDetail(e){this.detail=e},
+    async clearAudit(){
+      if(!confirm(_t('audit.clear_confirm')))return;
+      try{await api('POST','/api/admin/audit/clear');this.entries=[];toast(_t('common.delete')+' ✓',3000,'ok')}catch(e){toast(e.message,4000,'err')}
+    },
     copyAll(){
-      const text=this.entries.map(e=>[ts(e.ts),e.host_id,e.agent_id||'',e.command,e.source,e.status,e.duration_ms?e.duration_ms+'ms':'',e.reason||e.error||''].join('\t')).join('\n');
-      navigator.clipboard.writeText(text);toast('Copied '+this.entries.length+' entries',3000,'ok');
+      const text=this.entries.map(e=>[ts(e.ts),e.agent_id||e.source,e.host_id,e.command,e.status,e.duration_ms?e.duration_ms+'ms':''].join('\t')).join('\n');
+      navigator.clipboard.writeText(text);toast(_t('audit.copied_n').replace('{n}',this.entries.length),3000,'ok');
     },
     exportFile(fmt){window.open('/api/admin/audit/export?fmt='+fmt,'_blank')},
     _ws(){
       const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/audit');
       ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.ping||!this.live)return;this.entries.unshift(d);if(this.entries.length>1000)this.entries.pop();
         if(!this.sourcesList.includes(d.source)&&d.source)this.sourcesList.push(d.source);
-        if(d.status==='blocked')toast('Blocked: '+d.command,4000,'warn');
-        else if(d.status==='error')toast('SSH Error: '+(d.error||d.command),4000,'err');
+        if(d.status==='blocked')toast('🚫 '+d.command,4000,'warn');
+        else if(d.status==='error')toast('❌ '+(d.error||d.command),4000,'err');
       }
     }
   }

@@ -54,7 +54,10 @@
     "manage": "Управление →",
     "no_data": "Нет данных",
     "new_badge": "НОВОЕ",
-    "downloaded": "Скачано"
+    "downloaded": "Скачано",
+    "import_btn": "📥 Импорт",
+    "export_btn": "📤 Экспорт",
+    "duplicate": "Дублировать"
   },
   "status": {
     "ok": "OK",
@@ -90,7 +93,11 @@
     "source": "Источник",
     "duration": "Длит.",
     "agents": "Агенты",
-    "add_agent": "Добавить агента"
+    "add_agent": "Добавить агента",
+    "agent": "Агент",
+    "status": "Статус",
+    "audit_log": "Журнал →",
+    "approvals_page": "Подтверждения →"
   },
   "hosts": {
     "title": "Хосты",
@@ -146,7 +153,42 @@
     "detail": "Подробности",
     "confirm_delete": "Удалить хост",
     "list_view": "Список",
-    "grid_view": "Плитки"
+    "grid_view": "Плитки",
+    "ssh_key_label": "SSH ключ",
+    "show_full_key": "показать полный ключ",
+    "hide_key": "скрыть",
+    "setup_instructions": "Инструкция по настройке хоста",
+    "setup_run_as_root": "Выполните как root на целевом хосте",
+    "import_title": "Импорт хостов",
+    "import_hint": "Вставьте JSON или загрузите .json файл — один хост или массив.",
+    "setup_howto_title": "Как использовать:",
+    "setup_step1": "Подключитесь по SSH как root к",
+    "setup_step2": "Вставьте и выполните команды выше",
+    "setup_step3": "Будет создан пользователь с SSH-доступом по ключу",
+    "setup_step4": "Команды ограничены через sudoers — только из whitelist",
+    "setup_step5": "После настройки нажмите 🔌 Тест SSH для проверки",
+    "setup_run_desc": "Выполните эти команды на",
+    "setup_run_desc2": "для настройки SSH-доступа MCP Gate:",
+    "setup_quick_desc": "Минимальная настройка: создание пользователя + SSH ключ. Достаточно для подключения.",
+    "setup_sudoers_desc": "Только sudoers-правила. Запустите после изменения наборов команд.",
+    "setup_full_desc": "Полная настройка: пользователь + ключ + sudoers + проверка.",
+    "setup_step2_v2": "Скопируйте скрипт и выполните",
+    "deploy_key_confirm": "Развернуть SSH-ключ на этом хосте через текущее SSH-соединение?",
+    "deploying_key": "Развёртывание ключа...",
+    "verifying_sudoers": "Проверка sudoers...",
+    "deploy_key": "Деплой ключа",
+    "verify_sudoers": "Проверка sudoers",
+    "status_online": "онлайн",
+    "status_offline": "оффлайн",
+    "quick_setup": "Быстрая настройка",
+    "sudoers_only": "Только sudoers",
+    "full_script": "Полный скрипт",
+    "download_sh": "Скачать .sh",
+    "step_create_user": "Создать пользователя",
+    "step_ssh_key": "SSH ключ",
+    "step_verify": "Проверка",
+    "setup_download_or_copy": "Скачайте .sh файл или копируйте команды по шагам",
+    "setup_run_on_host": "Выполните на хосте как root: bash setup.sh"
   },
   "command_sets": {
     "title": "Наборы команд",
@@ -234,7 +276,15 @@
     "copy_json": "Копировать JSON",
     "click_copy": "Нажмите чтобы скопировать",
     "click_detail": "Нажмите для подробностей",
-    "copied_n": "Скопировано {n} записей"
+    "copied_n": "Скопировано {n} записей",
+    "period_24h": "24 часа",
+    "period_7d": "7 дней",
+    "system_events": "Система",
+    "console_events": "Консоль",
+    "agent": "Агент",
+    "advanced": "Расширенные фильтры",
+    "clear_log": "Очистить",
+    "clear_confirm": "Удалить ВСЕ записи журнала?"
   },
   "approvals": {
     "title": "Ожидают подтверждения",
@@ -254,7 +304,13 @@
     "auto_mode": "⚡ Авто-режим — выполняется немедленно",
     "approved": "Одобрено",
     "rejected": "Отклонено",
-    "new_pending": "Новый запрос на одобрение: "
+    "new_pending": "Новый запрос на одобрение: ",
+    "all": "Все",
+    "by_host": "По хосту",
+    "by_mode": "По режиму",
+    "strict_mode": "Строгий",
+    "optimistic_mode": "Оптимист.",
+    "pessimistic_mode": "Пессимист."
   },
   "secrets": {
     "title": "Хранилище ключей",
@@ -384,7 +440,31 @@
     "url_valid": "URL валиден",
     "url_invalid": "URL невалиден",
     "syntax_ok": "Корректно",
-    "syntax_fail": "Некорректно"
+    "syntax_fail": "Некорректно",
+    "ssh_keys": "Управление SSH ключами",
+    "test_all_hosts": "Тест всех хостов",
+    "rotate_key": "Сменить ключ",
+    "rotate_confirm": "Сменить ключ \"{name}\"?\n\n⚠️ Все хосты, использующие этот ключ, потеряют SSH-доступ до обновления authorized_keys.\n\nПродолжить?",
+    "key_rotated": "Ключ сменён. Новый fingerprint: {fp}",
+    "deploy_script": "Скрипт деплоя",
+    "deploy_script_desc": "Генерирует bash-скрипт для раскатки публичного ключа на все включённые хосты.",
+    "known_hosts": "Известные хосты",
+    "clear_fingerprint": "Очистить fingerprint",
+    "clear_confirm_fp": "Удалить запись known_hosts для {hostname}?",
+    "fingerprint_cleared": "Fingerprint очищен",
+    "days_old": "дней",
+    "rotate_recommended": "рекомендуется смена",
+    "show_full_key": "показать полный ключ",
+    "hide_key": "скрыть",
+    "used_by": "Используется",
+    "no_ssh_keys": "SSH ключи не найдены. Сгенерируйте ключ.",
+    "connection_test_results": "Результаты теста подключений",
+    "generate_script": "Сгенерировать",
+    "copy_script": "Копировать",
+    "deploy_key": "Деплой ключа",
+    "deploy_key_desc": "Автоматическая раскатка SSH публичного ключа на хост через текущее соединение.",
+    "toast_duration": "Длительность уведомлений (сек)",
+    "toast_duration_tip": "Сколько секунд отображаются всплывающие уведомления.\nПо умолчанию 3.5 сек."
   },
   "appearance": {
     "title": "Внешний вид",
@@ -542,6 +622,11 @@
     "no_command_sets": "Нет наборов — использует whitelist хоста напрямую",
     "enabled_label": "Включён",
     "list_view": "Список",
-    "grid_view": "Плитки"
+    "grid_view": "Плитки",
+    "custom_type": "Агент",
+    "add_agent": "Добавить агента",
+    "import_title": "Импорт агентов",
+    "import_hint": "Вставьте JSON или загрузите .json файл — один агент или массив.",
+    "export_title": "Экспорт агентов"
   }
 }

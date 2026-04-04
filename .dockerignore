@@ -1,6 +1,6 @@
 *.bak
-*.bak2
-*.bak3
+*.bak[0-9]*
+*.bak_*
 *.pre-patch
 *.pre-de
 *.pre-v2
@@ -9,10 +9,14 @@ __pycache__/
 *.pyc
 .git/
 .gitignore
+.github/
 docs/
 README.md
 CHANGELOG.md
 DEVLOG.md
 VERSIONING.md
+CONTRIBUTING.md
+SECURITY.md
+NOTICE
 LICENSE
 compose.override.yaml

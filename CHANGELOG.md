@@ -5,6 +5,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-04-04
+
+### Fixed
+- **CRITICAL: Disabled agent still accepted MCP requests** — `_require_mcp_auth()` only
+  validated token expiry but did not check `agent.enabled`. Toggling an agent OFF in
+  WebUI had no effect on active MCP sessions. Now both `_require_mcp_auth()` and
+  `_exec_tool()` verify agent is enabled; disabled agents get HTTP 403 immediately
+- **Dashboard "Approvals" card overflow** — pending approvals with long commands or
+  many items overflowed the card boundary. Added `max-height` with scroll
+- **Host setup script used wrong field name** — `routes_onboarding.py` read
+  `h.get("username")` but hosts.yaml stores it as `user`. Always defaulted to
+  "mcp-reader" regardless of actual config
+- **Duplicate `downloadSetup()` function** in dashboard.html — two identical
+  definitions caused the first to be silently overwritten
+- **Duplicate `data-i18n` attributes** on dashboard metric labels — cosmetic but
+  produced invalid HTML
+- **Duplicate Setup button** on host tiles in dashboard
+- **Missing SPDX header** in `routes_onboarding.py` — Copyright and GitHub URL
+  lines were absent
+
+### Changed
+- `.gitignore` — added `*.bak` pattern (previously only `*.bak_*` was covered,
+  leaving `*.bak` and `*.bak2` files unignored)
+- `.dockerignore` — added `*.bak[0-9]*` pattern and `.github/` exclusion
+- README.md — comprehensive rewrite with detailed architecture diagram, all 12+
+  screenshots, step-by-step installation guide, Nginx reverse proxy example,
+  update instructions, security model explanation
+
+### Security
+- Agent disable toggle now immediately blocks all MCP protocol access (OAuth
+  tokens are validated against live agent state on every request)
+
 ## [0.1.1] — 2026-04-02
 
 ### Fixed
@@ -34,12 +66,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Parameterized commands** — variables in commands (`docker logs {container} --tail {lines}`) with regex validation, max_length, default values, shell character blocking
 - **Secrets Vault** — Fernet-encrypted storage, `$SECRET{id}` substitution at execution time, output scrubbing, per-host binding
 - **Unified exec pipeline** — single `execute_command()` for API, Console, and MCP transport. Auth → params → approval → secrets → SSH → scrub → audit
-- **Host Setup Instructions** — three tabs: Quick (user + SSH key), Sudoers (sudo rules from command sets), Full (complete setup). Download .sh button, Deploy Key button (auto-deploy via SSH), Verify sudoers button. Portable `command -v visudo`
-- **Host status polling** — live status dots on host cards (grid + list), 30-second refresh via `/api/admin/hosts/status`
+- **Host Setup Instructions** — three tabs: Quick (user + SSH key), Sudoers (sudo rules from command sets), Full (complete setup). Download .sh button, Deploy Key button (auto-deploy via SSH), Verify sudoers button
+- **Host status polling** — live status dots on host cards (grid + list), 30-second refresh
 - **Import/Export** — paste JSON or drag-and-drop .json files for hosts, agents, command sets, secrets
 - **Audit improvements** — CRUD logging (create/update/delete/toggle/import), quick-filter chips, advanced filters, clickable cells, 24h/7d/clear, JSON/CSV export, WebSocket real-time updates
-- **SSH Key Management** — full lifecycle: generate, rotate, deploy to hosts, test-all, per-host keys, known_hosts viewer with clear per host. Settings page with key list (fingerprint, age, used_by)
-- **SSH security** — managed `known_hosts` (TOFU, reject-on-key-change MITM protection), `validate_key_path()` path traversal protection, `safe_key_name()` sanitization, backup export strips key_path
+- **SSH Key Management** — full lifecycle: generate, rotate, deploy to hosts, per-host keys, known_hosts viewer
+- **SSH security** — managed known_hosts (TOFU, reject-on-key-change MITM protection), path traversal protection, sanitization, backup export strips key_path
 - **Appearance theming** — 6 built-in themes, glassmorphism, custom backgrounds, custom logo
 - **Dashboard** — compact stat cards, host/agent tiles with ping status and command set tags, clickable 24h/7d metrics
 - **i18n** — English and Russian, full coverage
@@ -47,23 +79,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Host/Agent duplication** — one-click clone with auto-generated ID
 
 ### Changed
-- Modular codebase: split into `auth.py`, `executor.py`, `models.py`, `app_state.py`, `tasks.py`, `routes_admin.py`, `routes_ui.py`, `storage.py`, `ssh_client.py`, `params.py`, `notifications.py`, `constants.py`, `mcp_transport.py`
+- Modular codebase: split into 14 modules
 - VERSION centralized in `constants.py`
-- API key encryption: Fernet (reversible) instead of bcrypt
-- Helper functions renamed for clarity (`_rl` → `_check_rate_limit`, `_vkey` → `_validate_api_key`)
+- API key encryption: Fernet instead of bcrypt
 - Entity ID validation: regex `^[a-z0-9][a-z0-9_-]{0,63}$`
 
 ### Fixed
-- MCP transport now respects approval modes (was bypassing them)
-- Approval loop re-checks authorization before auto-approve on timeout
-- `list_hosts` correctly separates allow/deny command sets
-- Removed duplicate imports, `__import__("time")` hack
+- MCP transport respects approval modes
+- Approval loop re-checks authorization before auto-approve
 
 ### Security
-- Built-in authentication system replacing broken basicAuth middleware
-- SSH `AutoAddPolicy` replaced with `_ManagedHostKeyPolicy` (MITM protection)
+- Built-in auth system replacing broken basicAuth middleware
+- SSH `AutoAddPolicy` replaced with `_ManagedHostKeyPolicy`
 - Approval recheck before timeout auto-approve
-- Auth middleware: session-aware, public paths (MCP, health, static, agent exec API) bypass correctly
 
 ## [0.0.6] — 2026-03-22
 

@@ -63,10 +63,12 @@
       <b>Deny command sets</b> — type <code>deny</code> with highest priority. Authorization: <code>(host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)</code>.<br>
       <b>Parameterized commands</b> — variables with regex validation, defaults, shell character blocking.<br>
       <b>Secrets Vault</b> — Fernet-encrypted, <code>$SECRET{id}</code> substitution, output scrubbing.<br>
-      <b>Host Setup Instructions</b> — auto-generated useradd, SSH keys, sudoers whitelist.<br>
+      <b>Host Setup Instructions</b> — Quick/Sudoers/Full tabs, Download .sh, Deploy Key, Verify sudoers.<br>
+      <b>Host status polling</b> — live status dots on cards, 30-second refresh.<br>
       <b>Import/Export</b> — paste JSON or drag-and-drop .json for hosts, agents, command sets, secrets.<br>
       <b>Audit</b> — CRUD logging, quick-filter chips, advanced filters, JSON/CSV export, WebSocket real-time.<br>
-      <b>SSH security</b> — managed known_hosts (TOFU), Ed25519 key generation.<br>
+      <b>SSH Key Management</b> — generate, rotate, deploy, test-all, per-host keys, known_hosts viewer.<br>
+      <b>SSH security</b> — managed known_hosts (TOFU + MITM protection), path traversal protection, key sanitization.<br>
       <b>Appearance</b> — 6 themes, glassmorphism, custom backgrounds, custom logo/favicon.<br>
       <b>Dashboard</b> — stat cards, host/agent tiles with ping, clickable 24h/7d metrics.<br>
       <b>Notifications</b> — Telegram bot and SMTP email alerts.<br>

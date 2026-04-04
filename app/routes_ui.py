@@ -34,7 +34,7 @@ async def ui_dash(r: Request):
 @router.get("/hosts", response_class=HTMLResponse)
 async def ui_hosts(r: Request):
     return templates.TemplateResponse("hosts.html", {
-        "request": r, "hosts": storage.load_hosts(), "pub_key": ssh_client.get_public_key(),
+        "request": r, "hosts": storage.load_hosts(), "pub_key": ssh_client.get_public_key(), "ssh_fingerprint": ssh_client.get_fingerprint(),
         "command_sets": storage.load_command_sets(), "version": full_version()})
 
 @router.get("/agents", response_class=HTMLResponse)

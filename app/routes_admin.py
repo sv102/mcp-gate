@@ -250,6 +250,7 @@ async def cr_agent(a: AgentM):
         d["encrypted_api_key"] = storage.encrypt_agent_key(raw_key)
     storage.upsert_agent(d)
     storage.invalidate_agent_key_cache()
+    storage.append_audit({"command": f"create agent: {a.id}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "created", "id": a.id}
 
 
@@ -288,6 +289,7 @@ async def toggle_agent(aid: str):
         raise HTTPException(404)
     a["enabled"] = not a.get("enabled", True)
     storage.upsert_agent(a)
+    storage.append_audit({"command": f"toggle agent: {aid}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "toggled", "enabled": a["enabled"]}
 
 
@@ -303,6 +305,7 @@ async def dup_agent(aid: str):
     new.pop("encrypted_api_key", None)
     new["created_at"] = new["updated_at"] = time.time()
     storage.upsert_agent(new)
+    storage.append_audit({"command": f"duplicate agent: {aid}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "created", "id": new["id"]}
 
 
@@ -373,6 +376,7 @@ async def cr_set(cs: CmdSetM):
         d["color"] = "#7f1d1d"
     d["created_at"] = d["updated_at"] = time.time()
     storage.upsert_command_set(d)
+    storage.append_audit({"command": f"create command_set: {cs.id}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "created", "id": cs.id}
 
 
@@ -424,6 +428,7 @@ async def toggle_set(sid: str):
         raise HTTPException(404)
     cs["enabled"] = not cs.get("enabled", True)
     storage.upsert_command_set(cs)
+    storage.append_audit({"command": f"toggle command_set: {sid}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "toggled", "enabled": cs["enabled"]}
 
 
@@ -473,6 +478,7 @@ async def cr_secret(s: SecretM):
     if s.value:
         d["encrypted_value"] = storage._encrypt_value(s.value)
     storage.upsert_secret(d)
+    storage.append_audit({"command": f"create secret: {s.id}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "created", "id": s.id}
 
 @router.put("/api/admin/secrets/{sid}")
@@ -488,12 +494,14 @@ async def up_secret(sid: str, s: SecretM):
     elif old and old.get("encrypted_value"):
         d["encrypted_value"] = old["encrypted_value"]
     storage.upsert_secret(d)
+    storage.append_audit({"command": f"update secret: {sid}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "updated", "id": sid}
 
 @router.delete("/api/admin/secrets/{sid}")
 async def del_secret(sid: str):
     if not storage.delete_secret(sid):
         raise HTTPException(404)
+    storage.append_audit({"command": f"delete secret: {sid}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "deleted"}
 
 @router.get("/api/admin/secrets/{sid}/verify")
@@ -857,7 +865,12 @@ async def put_instance(req: Request):
 @router.post("/api/admin/ssh/generate")
 async def gen_key():
     _, pub = ssh_client.generate_keypair()
-    return {"public_key": pub}
+    fp = ssh_client.get_fingerprint()
+    storage.append_audit({
+        "command": "ssh key generated (initial)",
+        "source": "admin", "status": "ok", "host_id": "-"
+    })
+    return {"public_key": pub, "fingerprint": fp}
 
 @router.get("/api/admin/ssh/pubkey")
 async def get_pubkey():
@@ -865,6 +878,197 @@ async def get_pubkey():
     if not pub:
         raise HTTPException(404)
     return {"public_key": pub}
+
+
+# ═══ SSH Key Management ═══
+
+@router.post("/api/admin/ssh/rotate")
+async def rotate_key(req: Request):
+    """Rotate the default SSH keypair. Deletes old key, generates new one."""
+    body = {}
+    try:
+        body = await req.json()
+    except Exception:
+        pass
+    key_name = body.get("key_name", "mcp_ed25519")
+    old_pub = ssh_client.get_public_key(key_name)
+    old_fp = ssh_client.get_fingerprint(key_name)
+    _, new_pub = ssh_client.rotate_keypair(key_name)
+    new_fp = ssh_client.get_fingerprint(key_name)
+    storage.append_audit({
+        "command": f"ssh key rotated: {key_name}",
+        "source": "admin", "status": "ok", "host_id": "-",
+        "detail": f"old_fp={old_fp}, new_fp={new_fp}"
+    })
+    return {
+        "status": "rotated",
+        "key_name": key_name,
+        "public_key": new_pub,
+        "fingerprint": new_fp,
+        "old_fingerprint": old_fp,
+        "warning": "Update authorized_keys on all hosts that used this key."
+    }
+
+
+@router.get("/api/admin/ssh/keys")
+async def list_ssh_keys():
+    """List all SSH keypairs with metadata (fingerprint, age, etc)."""
+    keys = ssh_client.list_keys()
+    # Annotate which hosts use each key
+    hosts = storage.load_hosts()
+    for k in keys:
+        k["used_by"] = [
+            h["id"] for h in hosts
+            if h.get("key_path", "").endswith("/" + k["key_name"])
+            or (k["is_default"] and not h.get("key_path"))
+        ]
+    return {"keys": keys}
+
+
+@router.post("/api/admin/ssh/test-all")
+async def test_all_hosts():
+    """Test SSH connection to all enabled hosts. Returns per-host results."""
+    hosts = storage.load_hosts()
+    results = []
+    for h in hosts:
+        if not h.get("enabled", True):
+            results.append({"host_id": h["id"], "skipped": True, "reason": "disabled"})
+            continue
+        r = ssh_client.test_connection(h)
+        r["host_id"] = h["id"]
+        r["hostname"] = h.get("hostname", "")
+        results.append(r)
+    ok = sum(1 for r in results if r.get("ok"))
+    fail = sum(1 for r in results if not r.get("ok") and not r.get("skipped"))
+    storage.append_audit({
+        "command": f"ssh test-all: {ok} ok, {fail} fail",
+        "source": "admin", "status": "ok" if fail == 0 else "warn", "host_id": "-"
+    })
+    return {"results": results, "ok": ok, "fail": fail, "total": len(results)}
+
+
+@router.post("/api/admin/ssh/clear-fingerprint")
+async def clear_fp(req: Request):
+    """Clear known_hosts entry for a specific host."""
+    body = await req.json()
+    hostname = body.get("hostname", "")
+    port = body.get("port", 22)
+    if not hostname:
+        raise HTTPException(400, "hostname required")
+    removed = ssh_client.clear_known_host(hostname, port)
+    if removed:
+        storage.append_audit({
+            "command": f"clear host fingerprint: {hostname}:{port}",
+            "source": "admin", "status": "ok", "host_id": "-"
+        })
+    return {"removed": removed, "hostname": hostname, "port": port}
+
+
+@router.get("/api/admin/ssh/known-hosts")
+async def list_known_hosts():
+    """List all entries in known_hosts."""
+    return {"entries": ssh_client.get_known_hosts_info()}
+
+
+@router.get("/api/admin/ssh/deploy-script")
+async def deploy_script(key_name: str = "mcp_ed25519"):
+    """Generate bash script to deploy public key to all hosts."""
+    hosts = storage.load_hosts()
+    script = ssh_client.get_deploy_script(hosts, key_name)
+    return {"script": script, "host_count": len([h for h in hosts if h.get("enabled", True)])}
+
+
+@router.post("/api/admin/hosts/{hid}/deploy-key")
+async def deploy_key_to_host(hid: str, req: Request):
+    """Auto-deploy SSH public key to a host via existing SSH connection (Variant B).
+    Requires the privileged command 'mcp-gate-update-key' in the host's command set,
+    or direct execution if the host has an active connection."""
+    h = storage.get_host(hid)
+    if not h:
+        raise HTTPException(404)
+
+    body = {}
+    try:
+        body = await req.json()
+    except Exception:
+        pass
+
+    key_name = body.get("key_name", "mcp_ed25519")
+    old_key_name = body.get("old_key_name")
+
+    result = ssh_client.deploy_key_to_host(h, key_name, old_key_name)
+    storage.append_audit({
+        "command": f"deploy-key to {hid} (key={key_name})",
+        "source": "admin",
+        "status": "ok" if result["ok"] else "error",
+        "host_id": hid,
+        "detail": result.get("message", "")
+    })
+    return result
+
+
+@router.post("/api/admin/hosts/{hid}/verify-sudoers")
+async def verify_sudoers(hid: str):
+    """Connect to host, run 'sudo -l', compare with expected sudo whitelist."""
+    h = storage.get_host(hid)
+    if not h:
+        raise HTTPException(404)
+
+    # Collect expected sudo commands from command sets + whitelist
+    expected = set()
+    for sid in h.get("command_sets", []):
+        cs = storage.get_command_set(sid)
+        if not cs or cs.get("type") == "deny" or not cs.get("enabled", True):
+            continue
+        for c in cs.get("commands", []):
+            cmd = c.get("cmd", c) if isinstance(c, dict) else c
+            if cmd.startswith("sudo "):
+                expected.add(cmd[5:].strip())
+    for w in h.get("whitelist", []):
+        cmd = w.get("cmd", w) if isinstance(w, dict) else w
+        if cmd.startswith("sudo "):
+            expected.add(cmd[5:].strip())
+
+    # Connect and run sudo -l
+    user = h.get("user", "mcp-reader")
+    result = ssh_client.execute(h, f"sudo -l -U {user} 2>/dev/null")
+
+    if result.get("status") != "ok":
+        return {"ok": False, "error": result.get("error", "SSH failed"),
+                "expected_count": len(expected)}
+
+    output = result.get("output", "")
+    # Parse sudo -l output: lines with NOPASSWD
+    found = set()
+    for line in output.split("\n"):
+        line = line.strip()
+        if "NOPASSWD" in line:
+            # Extract command path after NOPASSWD:
+            parts = line.split("NOPASSWD:")
+            if len(parts) > 1:
+                cmd = parts[1].strip()
+                if cmd:
+                    found.add(cmd)
+
+    missing = expected - found
+    extra = found - expected if found else set()
+
+    storage.append_audit({
+        "command": f"verify-sudoers {hid}: {len(expected)} expected, {len(found)} found, {len(missing)} missing",
+        "source": "admin", "status": "ok" if not missing else "warn", "host_id": hid
+    })
+
+    return {
+        "ok": len(missing) == 0,
+        "expected_count": len(expected),
+        "found_count": len(found),
+        "missing": sorted(missing)[:20],
+        "extra": sorted(extra)[:10],
+        "raw_output": output[:2000],
+    }
+
+
+
 
 
 @router.post("/api/admin/bootstrap")

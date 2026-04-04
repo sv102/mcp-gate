@@ -54,7 +54,10 @@
     "manage": "Manage →",
     "no_data": "No data",
     "new_badge": "NEW",
-    "downloaded": "Downloaded"
+    "downloaded": "Downloaded",
+    "import_btn": "📥 Import",
+    "export_btn": "📤 Export",
+    "duplicate": "Duplicate"
   },
   "status": {
     "ok": "OK",
@@ -90,7 +93,11 @@
     "source": "Source",
     "duration": "Duration",
     "agents": "Agents",
-    "add_agent": "Add agent"
+    "add_agent": "Add agent",
+    "agent": "Agent",
+    "status": "Status",
+    "audit_log": "Audit Log →",
+    "approvals_page": "Approvals →"
   },
   "hosts": {
     "title": "Hosts",
@@ -146,7 +153,42 @@
     "detail": "Details",
     "confirm_delete": "Delete host",
     "list_view": "List",
-    "grid_view": "Grid"
+    "grid_view": "Grid",
+    "ssh_key_label": "SSH Key",
+    "show_full_key": "show full key",
+    "hide_key": "hide",
+    "setup_instructions": "Host Setup Instructions",
+    "setup_run_as_root": "Run as root on the target host",
+    "import_title": "Import Hosts",
+    "import_hint": "Paste JSON or upload .json file — single host or array.",
+    "setup_howto_title": "How to use:",
+    "setup_step1": "SSH into the host as root:",
+    "setup_step2": "Paste and run the commands above",
+    "setup_step3": "Creates a limited user with SSH key auth",
+    "setup_step4": "Commands are restricted by sudo — whitelisted only",
+    "setup_step5": "After setup, click 🔌 SSH Test to verify connection",
+    "setup_run_desc": "Run these commands on",
+    "setup_run_desc2": "to prepare SSH access for MCP Gate:",
+    "setup_quick_desc": "Minimal setup: create user + SSH key. Enough to connect.",
+    "setup_sudoers_desc": "Sudoers rules only. Run after changing command sets.",
+    "setup_full_desc": "Full setup: user + key + sudoers + verification.",
+    "setup_step2_v2": "Copy the script and execute",
+    "deploy_key_confirm": "Deploy SSH public key to this host via existing SSH connection?",
+    "deploying_key": "Deploying key...",
+    "verifying_sudoers": "Verifying sudoers...",
+    "deploy_key": "Deploy Key",
+    "verify_sudoers": "Verify Sudoers",
+    "status_online": "online",
+    "status_offline": "offline",
+    "quick_setup": "Quick Setup",
+    "sudoers_only": "Sudoers Only",
+    "full_script": "Full Script",
+    "download_sh": "Download .sh",
+    "step_create_user": "Create user",
+    "step_ssh_key": "SSH key",
+    "step_verify": "Verify",
+    "setup_download_or_copy": "Download .sh file or copy commands step by step",
+    "setup_run_on_host": "Run on host as root: bash setup.sh"
   },
   "command_sets": {
     "title": "Command Sets",
@@ -234,7 +276,15 @@
     "copy_json": "Copy JSON",
     "click_copy": "Click to copy",
     "click_detail": "Click for details",
-    "copied_n": "Copied {n} entries"
+    "copied_n": "Copied {n} entries",
+    "period_24h": "24 hours",
+    "period_7d": "7 days",
+    "system_events": "System",
+    "console_events": "Console",
+    "agent": "Agent",
+    "advanced": "Advanced Filters",
+    "clear_log": "Clear",
+    "clear_confirm": "Delete ALL audit entries?"
   },
   "approvals": {
     "title": "Pending Approvals",
@@ -254,7 +304,13 @@
     "auto_mode": "⚡ Auto mode — executed immediately",
     "approved": "Approved",
     "rejected": "Rejected",
-    "new_pending": "New approval request: "
+    "new_pending": "New approval request: ",
+    "all": "All",
+    "by_host": "By host",
+    "by_mode": "By mode",
+    "strict_mode": "Strict",
+    "optimistic_mode": "Optimistic",
+    "pessimistic_mode": "Pessimistic"
   },
   "secrets": {
     "title": "Secrets Vault",
@@ -384,7 +440,31 @@
     "url_valid": "Valid URL",
     "url_invalid": "Invalid URL",
     "syntax_ok": "Valid",
-    "syntax_fail": "Invalid"
+    "syntax_fail": "Invalid",
+    "ssh_keys": "SSH Key Management",
+    "test_all_hosts": "Test All Hosts",
+    "rotate_key": "Rotate Key",
+    "rotate_confirm": "Rotate key \"{name}\"?\n\n⚠️ All hosts using this key will lose SSH access until you update their authorized_keys.\n\nContinue?",
+    "key_rotated": "Key rotated. New fingerprint: {fp}",
+    "deploy_script": "Deploy Script",
+    "deploy_script_desc": "Generates a bash script to deploy the public key to all enabled hosts.",
+    "known_hosts": "Known Hosts",
+    "clear_fingerprint": "Clear Fingerprint",
+    "clear_confirm_fp": "Remove known_hosts entry for {hostname}?",
+    "fingerprint_cleared": "Fingerprint cleared",
+    "days_old": "days old",
+    "rotate_recommended": "rotate recommended",
+    "show_full_key": "show full key",
+    "hide_key": "hide",
+    "used_by": "Used by",
+    "no_ssh_keys": "No SSH keys found. Generate one first.",
+    "connection_test_results": "Connection Test Results",
+    "generate_script": "Generate",
+    "copy_script": "Copy",
+    "deploy_key": "Deploy Key",
+    "deploy_key_desc": "Auto-deploy SSH public key to this host via existing connection.",
+    "toast_duration": "Toast Duration (sec)",
+    "toast_duration_tip": "How long toast notifications stay visible.\nDefault: 3.5 sec."
   },
   "appearance": {
     "title": "Appearance",
@@ -542,6 +622,11 @@
     "no_command_sets": "No sets — uses host whitelist directly",
     "enabled_label": "Enabled",
     "list_view": "List",
-    "grid_view": "Grid"
+    "grid_view": "Grid",
+    "custom_type": "Agent",
+    "add_agent": "Add Agent",
+    "import_title": "Import Agents",
+    "import_hint": "Paste JSON or upload .json file — single agent or array.",
+    "export_title": "Export Agents"
   }
 }

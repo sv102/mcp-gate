@@ -22,6 +22,7 @@
     <div class="form-row"><label data-i18n="settings.ssh_key_path">SSH Key Path</label>
       <div style="display:flex;gap:6px;align-items:center"><input x-model="f.ssh_key_path" placeholder="/data/ssh_keys/mcp_ed25519" style="flex:1"><span x-show="checks.ssh_key_path!==undefined" x-text="checks.ssh_key_path?'✅':'❌'" style="font-size:16px"></span></div></div>
     <div class="form-row"><label data-i18n="settings.ping_interval" data-i18n-tip="settings.ping_interval_tip" data-tip="Host availability check interval (sec)" data-tip-down>Ping Interval (sec)</label><input type="number" x-model.number="f.ping_interval" min="10" max="600"></div>
+    <div class="form-row"><label data-i18n="settings.toast_duration" data-i18n-tip="settings.toast_duration_tip" data-tip="How long toast notifications stay visible (seconds)" data-tip-down>Toast Duration (sec)</label><input type="number" x-model.number="f.toast_duration" min="1" max="30" step="0.5"></div>
     <div class="form-row"><label data-i18n="settings.max_audit">Max Audit Entries</label><input type="number" x-model.number="f.audit_max_entries" min="100"></div>
     <div class="form-row"><label data-i18n="settings.compose_path">Compose Path</label>
       <div style="display:flex;gap:6px;align-items:center"><input x-model="f.compose_path" placeholder="/opt/mcp-gate" style="flex:1"><span x-show="checks.compose_path!==undefined" x-text="checks.compose_path?'✅':'❌'" style="font-size:16px"></span></div></div>
@@ -151,6 +152,114 @@
   </template>
 </div>
 
+<!-- SSH Key Management -->
+<div x-data="sshKeysApp()" x-init="load()" class="card">
+  <div class="flex-between">
+    <h2 style="margin-top:0">🔐 <span data-i18n="settings.ssh_keys">SSH Key Management</span></h2>
+    <div class="flex" style="gap:4px">
+      <button class="btn btn-sm" @click="testAll()" :disabled="testing">
+        <span x-show="!testing" data-i18n="settings.test_all_hosts">Test All Hosts</span>
+        <span x-show="testing">Testing...</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Key list -->
+  <div class="mt-2">
+    <template x-for="k in keys" :key="k.key_name">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
+        <div class="flex-between">
+          <div>
+            <span style="font-weight:600;font-size:14px" x-text="k.key_name"></span>
+            <span x-show="k.is_default" class="badge badge-ok" style="margin-left:6px">default</span>
+            <span class="text-muted" style="font-size:11px;margin-left:8px" x-text="k.age_days+' days old'"></span>
+            <span x-show="k.age_days > 180" style="color:var(--orange);font-size:11px;margin-left:4px">⚠️</span>
+            <span x-show="k.age_days > 365" style="color:var(--red);font-size:11px;margin-left:4px">🔴 rotate recommended</span>
+          </div>
+          <div class="flex" style="gap:4px">
+            <button class="btn btn-sm btn-orange" @click="rotateKey(k.key_name)"
+              title="Generate new keypair (old key will stop working)">🔄 Rotate</button>
+          </div>
+        </div>
+        <div class="mt-2" style="font-size:12px">
+          <div><span class="text-muted">Fingerprint:</span> <code style="color:var(--cyan);cursor:pointer" @click="copyText(k.fingerprint);toast('Copied',1500,'ok')" x-text="k.fingerprint" title="Click to copy"></code></div>
+          <div class="mt-1">
+            <span class="text-muted">Public key:</span>
+            <span style="cursor:pointer;color:var(--accent)" @click="k._showFull=!k._showFull" x-text="k._showFull?'▼ hide':'▶ show full key'"></span>
+            <button class="btn btn-sm" style="margin-left:4px;padding:2px 6px" @click="copyText(k.public_key);toast('Public key copied',1500,'ok')">📋</button>
+          </div>
+          <template x-if="k._showFull">
+            <pre style="font-size:10px;color:var(--green);word-break:break-all;margin:4px 0;padding:8px;background:var(--bg2);border-radius:4px" x-text="k.public_key"></pre>
+          </template>
+          <div class="mt-1" x-show="k.used_by?.length">
+            <span class="text-muted">Used by:</span>
+            <template x-for="hid in k.used_by"><span class="badge" style="margin-left:4px;font-size:10px" x-text="hid"></span></template>
+          </div>
+        </div>
+      </div>
+    </template>
+    <div x-show="!keys.length" class="text-muted" style="font-size:12px">No SSH keys found. Generate one first.</div>
+  </div>
+
+  <!-- Test results -->
+  <template x-if="testResults.length">
+    <div class="mt-4" style="border-top:1px solid var(--border);padding-top:12px">
+      <h3 style="font-size:14px;margin:0 0 8px">Connection Test Results</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <template x-for="r in testResults" :key="r.host_id">
+          <div style="font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border)"
+               :style="r.ok?'background:rgba(16,185,129,0.1)':r.skipped?'background:var(--bg3)':'background:rgba(239,68,68,0.1)'">
+            <span style="font-weight:600" x-text="r.host_id"></span>
+            <span x-show="r.ok" style="color:var(--green)">✅</span>
+            <span x-show="!r.ok && !r.skipped" style="color:var(--red)">❌</span>
+            <span x-show="r.skipped" class="text-muted">⏭ skip</span>
+            <span x-show="!r.ok && r.message" class="text-muted" style="font-size:10px;display:block" x-text="r.message"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <!-- Deploy script -->
+  <div class="mt-4" style="border-top:1px solid var(--border);padding-top:12px">
+    <div class="flex-between">
+      <h3 style="font-size:14px;margin:0">Deploy Script</h3>
+      <div class="flex" style="gap:4px">
+        <button class="btn btn-sm" @click="loadScript()">📜 Generate</button>
+        <button class="btn btn-sm" x-show="deployScript" @click="copyText(deployScript);toast('Script copied',1500,'ok')">📋 Copy</button>
+      </div>
+    </div>
+    <template x-if="deployScript">
+      <pre style="font-size:10px;color:var(--cyan);max-height:200px;overflow-y:auto;margin-top:8px;padding:8px;background:var(--bg2);border-radius:4px;white-space:pre-wrap" x-text="deployScript"></pre>
+    </template>
+    <p class="text-muted" style="font-size:11px;margin-top:4px">Generates a bash script to deploy the public key to all enabled hosts.</p>
+  </div>
+
+  <!-- Known Hosts -->
+  <div class="mt-4" style="border-top:1px solid var(--border);padding-top:12px">
+    <div class="flex-between">
+      <h3 style="font-size:14px;margin:0">Known Hosts (<span x-text="knownHosts.length"></span>)</h3>
+      <button class="btn btn-sm" @click="loadKnownHosts()">🔄 Refresh</button>
+    </div>
+    <template x-if="knownHosts.length">
+      <div style="margin-top:8px">
+        <template x-for="(kh, idx) in knownHosts" :key="idx">
+          <div class="flex-between" style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)">
+            <div>
+              <span style="font-weight:600" x-text="kh.hostname"></span>
+              <span class="text-muted" x-text="kh.key_type" style="margin-left:6px"></span>
+              <code style="color:var(--cyan);font-size:10px;margin-left:6px" x-text="kh.fingerprint"></code>
+            </div>
+            <button class="btn btn-sm btn-red" style="padding:2px 8px;font-size:10px"
+              @click="clearFingerprint(kh.hostname)" title="Remove from known_hosts">✕</button>
+          </div>
+        </template>
+      </div>
+    </template>
+    <div x-show="!knownHosts.length" class="text-muted mt-1" style="font-size:12px">No known hosts saved yet.</div>
+  </div>
+</div>
+
 <!-- Security -->
 <div class="card">
   <h2 style="margin-top:0">🛡️ <span data-i18n="settings.security">Security</span></h2>
@@ -221,6 +330,58 @@ function pwApp(){
           this.sshCmd=`sed -i 's|users:.*|users: "${escaped}"|' ${path}`;
           toast(T('common.saved'),3000,'ok')
         }else{toast(r.error||'Error',4000,'err')}
+      }catch(e){toast(e.message,4000,'err')}
+    }
+  }
+}
+function sshKeysApp(){
+  return{
+    keys:[],testResults:[],deployScript:'',knownHosts:[],testing:false,
+    async load(){
+      try{
+        const r=await api('GET','/api/admin/ssh/keys');
+        this.keys=(r.keys||[]).map(k=>({...k,_showFull:false}));
+      }catch(e){console.error('ssh keys load:',e)}
+    },
+    async rotateKey(name){
+      const msg=`Rotate key "${name}"?\n\n⚠️ All hosts using this key will lose SSH access until you update their authorized_keys.\n\nContinue?`;
+      if(!confirm(msg))return;
+      try{
+        const r=await api('POST','/api/admin/ssh/rotate',{key_name:name});
+        toast('Key rotated. New fingerprint: '+r.fingerprint,5000,'ok');
+        await this.load();
+        await this.testAll();
+      }catch(e){toast(e.message,4000,'err')}
+    },
+    async testAll(){
+      this.testing=true;this.testResults=[];
+      try{
+        const r=await api('POST','/api/admin/ssh/test-all');
+        this.testResults=r.results||[];
+        const msg=`${r.ok} ok, ${r.fail} fail`;
+        toast(msg,3000,r.fail?'err':'ok');
+      }catch(e){toast(e.message,4000,'err')}
+      this.testing=false;
+    },
+    async loadScript(){
+      try{
+        const r=await api('GET','/api/admin/ssh/deploy-script');
+        this.deployScript=r.script||'';
+      }catch(e){toast(e.message,4000,'err')}
+    },
+    async loadKnownHosts(){
+      try{
+        const r=await api('GET','/api/admin/ssh/known-hosts');
+        this.knownHosts=r.entries||[];
+      }catch(e){toast(e.message,4000,'err')}
+    },
+    async clearFingerprint(hostname){
+      if(!confirm(`Remove known_hosts entry for ${hostname}?`))return;
+      try{
+        const port=22; // TODO: extract from host data
+        await api('POST','/api/admin/ssh/clear-fingerprint',{hostname,port});
+        toast('Fingerprint cleared',2000,'ok');
+        await this.loadKnownHosts();
       }catch(e){toast(e.message,4000,'err')}
     }
   }

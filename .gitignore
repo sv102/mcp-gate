@@ -1,9 +1,13 @@
 __pycache__/
 *.pyc
 .env
+*.bak
+*.bak[0-9]*
+*.bak_*
 app.bak.*
 *.egg-info/
 .DS_Store
 /data/
 compose.override.yaml
 DEVLOG.md
+_old_backup/

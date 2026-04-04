@@ -29,7 +29,7 @@ log = logging.getLogger("mcp-gate.mcp")
 MCP_TOKEN = os.getenv("MCP_TOKEN", "")
 BASE_URL = os.getenv("MCP_BASE_URL", "")
 TOKENS_FILE = os.path.join(os.getenv("DATA_DIR", "/data"), "mcp_oauth_tokens.json")
-from constants import VERSION
+from constants import VERSION, full_version
 
 # NOTE: oauth_clients and auth_codes are in-memory only — lost on container restart.
 # This is acceptable: OAuth DCR clients re-register automatically on reconnect.
@@ -71,6 +71,13 @@ def _require_mcp_auth(request: Request) -> dict:
     if not entry or entry.get("expires", 0) < time.time():
         access_tokens.pop(token, None)
         raise HTTPException(401, "Invalid or expired token")
+    # ── Check agent is still enabled (toggle OFF = instant block) ──
+    agent_id = entry.get("agent_id", "")
+    if agent_id:
+        agent = storage.get_agent(agent_id)
+        if not agent or not agent.get("enabled", True):
+            log.warning(f"MCP request blocked: agent '{agent_id}' is disabled")
+            raise HTTPException(403, f"Agent '{agent_id}' is disabled")
     return entry
 
 TOOLS = [
@@ -102,6 +109,9 @@ _start_time = time.time()
 
 async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
     agent = storage.get_agent(agent_id) if agent_id else None
+    # ── Reject if agent is disabled ──
+    if agent and not agent.get("enabled", True):
+        return f"Error: agent '{agent_id}' is disabled."
     allowed_hosts = agent.get("allowed_hosts", []) if agent else []
 
     if name == "list_hosts":
@@ -160,7 +170,64 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
         elif action == "dry_run":
             return f"Dry run: would execute '{result['would_execute']}' (mode: {result['mode']})"
         elif action == "pending":
-            return f"Command queued for approval.\nApproval ID: {result['approval_id']}\nMode: {result['approval_mode']}"
+            aid = result["approval_id"]
+            mode = result["approval_mode"]
+            # For MCP transport: poll until resolved (max 120s)
+            # Optimistic auto-approves on timeout; pessimistic auto-rejects
+            poll_max = min(120, int(result.get("expires_at", time.time() + 120) - time.time())) if result.get("expires_at") else 120
+            poll_interval = 2
+            elapsed = 0
+            while elapsed < poll_max:
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+                # Check queue for resolution
+                for qi in storage.load_queue():
+                    if qi.get("approval_id") == aid:
+                        if qi["status"] == "pending":
+                            break  # still pending, keep waiting
+                        # Resolved — check audit for execution result
+                        audit = storage.load_audit(limit=10)
+                        for ae in audit:
+                            if ae.get("approval_id") == aid and ae.get("status") in ("ok", "error"):
+                                if ae.get("status") == "ok":
+                                    out = ae.get("output", "")
+                                    err_out = ae.get("stderr", "")
+                                    ms = ae.get("duration_ms", "?")
+                                    text = f"[{ae.get('host_id',host_id)}] exit={ae.get('exit_code','?')} ({ms}ms)\n{out}"
+                                    if err_out:
+                                        text += f"\nSTDERR:\n{err_out}"
+                                    return text
+                                else:
+                                    return f"Error: {ae.get('error', 'command failed after approval')}"
+                        # Resolved but no audit entry yet — report status
+                        if qi["status"] in ("approve", "approved"):
+                            return f"Command approved (approval_id={aid}). Execution result pending."
+                        else:
+                            return f"Command rejected (approval_id={aid}, mode={mode})."
+                else:
+                    # Item not found in queue (already cleaned up) — check audit
+                    audit = storage.load_audit(limit=10)
+                    for ae in audit:
+                        if ae.get("approval_id") == aid:
+                            if ae.get("status") == "ok":
+                                out = ae.get("output", "")
+                                err_out = ae.get("stderr", "")
+                                ms = ae.get("duration_ms", "?")
+                                text = f"[{ae.get('host_id',host_id)}] exit={ae.get('exit_code','?')} ({ms}ms)\n{out}"
+                                if err_out:
+                                    text += f"\nSTDERR:\n{err_out}"
+                                return text
+                            elif ae.get("status") == "error":
+                                return f"Error: {ae.get('error', 'unknown')}"
+                            elif ae.get("status") == "rejected":
+                                return f"Command rejected (approval_id={aid})."
+                            elif ae.get("source") in ("manual_approve", "auto_approve"):
+                                out = ae.get("output", "")
+                                ms = ae.get("duration_ms", "?")
+                                return f"[{ae.get('host_id',host_id)}] exit={ae.get('exit_code','?')} ({ms}ms)\n{out}"
+                    break  # not in queue and not in audit — give up
+            # Timeout — return pending status
+            return f"Command queued for approval (still pending after {elapsed}s).\nApproval ID: {aid}\nMode: {mode}"
         elif action == "executed":
             r = result["result"]
             if r.get("status") == "ok":
@@ -178,7 +245,7 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
         hosts = storage.load_hosts()
         agents = storage.load_agents()
         return json.dumps({
-            "status": "ok", "version": VERSION,
+            "status": "ok", "version": full_version(),
             "hosts_total": len(hosts),
             "hosts_enabled": sum(1 for h in hosts if h.get("enabled", True)),
             "agents": len(agents),
@@ -198,7 +265,7 @@ async def _handle_rpc(req: dict, agent_id: str) -> dict:
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mcp-gate", "version": VERSION},
+            "serverInfo": {"name": "mcp-gate", "version": full_version()},
         }}
     elif method == "tools/list":
         return {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}}

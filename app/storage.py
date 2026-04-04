@@ -806,7 +806,8 @@ def export_backup() -> dict:
         agents_safe.append(a_copy)
     return {
         "version": VERSION, "exported_at": time.time(),
-        "hosts": load_hosts(), "command_sets": load_command_sets(),
+        "hosts": [{k: v for k, v in h.items() if k != "key_path"} for h in load_hosts()],  # strip key_path
+        "command_sets": load_command_sets(),
         "agents": agents_safe, "secrets_meta": export_secrets_meta(), "config": safe,
     }
 
@@ -814,6 +815,11 @@ def export_backup() -> dict:
 def import_backup(data: dict) -> dict:
     r = {"hosts": 0, "command_sets": 0, "agents": 0, "config": False}
     if "hosts" in data:
+        # Normalize key_path: set default if missing or invalid
+        for h in data["hosts"]:
+            kp = h.get("key_path", "")
+            if not kp or ".." in kp or not kp.startswith("/data/ssh_keys/"):
+                h["key_path"] = "/data/ssh_keys/mcp_ed25519"
         save_hosts(data["hosts"])
         r["hosts"] = len(data["hosts"])
     if "command_sets" in data:

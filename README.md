@@ -1,82 +1,107 @@
-# MCP Gate
+<p align="center">
+  <img src="docs/screenshots/logo.png" alt="MCP Gate" width="380">
+</p>
 
-[![GitHub release](https://img.shields.io/github/v/release/sv102/mcp-gate)](https://github.com/sv102/mcp-gate/releases)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Docker](https://img.shields.io/badge/ghcr.io-sv102%2Fmcp--gate-blue?logo=docker)](https://ghcr.io/sv102/mcp-gate)
+<h1 align="center">MCP Gate</h1>
 
-**SSH Access Control for LLM Agents**
+<p align="center">
+  <strong>Secure gateway between AI agents (Claude, ChatGPT, Cursor…) and your SSH infrastructure</strong>
+</p>
 
-MCP Gate is a self-hosted web service that provides secure, controlled SSH access from LLM agents (Claude, GPT, etc.) to your infrastructure. Instead of giving AI assistants unrestricted shell access, MCP Gate enforces whitelists, approval workflows, rate limiting, and full audit logging.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License"></a>
+  <img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/docker-compose%20V2-2496ED.svg" alt="Docker">
+  <img src="https://img.shields.io/badge/MCP-protocol-818cf8.svg" alt="MCP">
+</p>
 
-![Dashboard](docs/screenshots/dashboard.png)
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="docs/guide.md">Full Guide</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-## The Problem
+---
 
-LLM agents need to execute commands on your servers for monitoring, diagnostics, and automation. Direct SSH access is dangerous — one hallucinated `rm -rf` can destroy your infrastructure. MCP Gate sits between the agent and your servers, ensuring only approved commands run.
+## What is MCP Gate?
 
-## How It Works
+MCP Gate is a self-hosted security gateway that lets AI assistants (LLMs) execute **only pre-approved commands** on your servers via SSH. Every command is checked against a whitelist, every action is logged, and you stay in full control.
+
+Think of it as a **firewall for AI → SSH access**: your LLM agent connects via the standard [MCP protocol](https://modelcontextprotocol.io/), MCP Gate checks the command against the whitelist, optionally waits for your approval, executes it on the target host via SSH, and returns the result — all with full audit trail.
 
 ```
-LLM Agent (Claude, GPT, ...)
-        │
-   MCP Connector / API call
-        │
-        ▼
-   ┌─────────────┐
-   │  MCP Gate    │  ← Whitelist check
-   │              │  ← Rate limiting
-   │  (this app)  │  ← Approval workflow
-   │              │  ← Audit logging
-   └──────┬──────┘
-          │
-     SSH (paramiko)
-          │
-          ▼
-   Target Servers
-   (only whitelisted commands)
+LLM Agent ──MCP Protocol──▶ MCP Gate ──SSH──▶ Your Servers
+                               │
+                       ┌───────┴───────┐
+                       │  ✓ Whitelist  │
+                       │  🔐 Secrets   │
+                       │  ⏳ Approval  │
+                       │  📋 Audit     │
+                       └───────────────┘
 ```
+
+### Why MCP Gate?
+
+- **Whitelist-only** — commands not in the whitelist are blocked before reaching SSH. Deny sets always win.
+- **Human-in-the-loop** — four approval modes (auto / pessimistic / optimistic / strict) let you decide what runs without your approval and what needs a manual confirm.
+- **Full audit trail** — every request, block, CRUD operation, and approval decision is logged with context. Export as JSON/CSV, view in real-time via WebSocket.
+
+---
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Whitelist-only execution** | Only pre-approved commands can run. Everything else is blocked and logged |
-| **Command Sets** | Reusable command groups with Allow/Deny types. Formula: `(host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)` |
-| **MCP Protocol** | Native Streamable HTTP + SSE transport. Claude.ai, Cursor, Windsurf, Continue, Cline connect via standard MCP connector |
-| **OAuth 2.0** | Dynamic Client Registration, PKCE S256, per-agent Bearer tokens |
-| **Authentication** | Three modes: `basic` (built-in login with bcrypt + signed session cookie), `proxy` (trust X-Forwarded-User from Authentik/Keycloak/etc.), `none` (homelab behind VPN) |
-| **Agents** | Per-agent command sets, rate limits, allowed hosts. Supports Claude, ChatGPT, Gemini, Cursor, Windsurf, Continue, Cline, Open WebUI |
-| **Parameterized commands** | Variables with regex validation: `docker logs {container} --tail {lines}` |
-| **4 Approval Modes** | `auto`, `pessimistic`, `optimistic`, `strict` |
-| **Secrets Vault** | Fernet-encrypted storage. `$SECRET{id}` substituted server-side, scrubbed from responses |
-| **Audit Log** | Every request logged with context. CRUD events, approval decisions. Export as JSON/CSV. Live WebSocket updates |
-| **Host Setup Instructions** | Auto-generated useradd, SSH authorized_keys, sudoers commands for each host |
-| **Rate Limiting** | Per-host request limits to prevent LLM loops |
-| **Notifications** | Telegram bot and SMTP email alerts |
-| **Appearance Theming** | 6 built-in themes, glassmorphism, custom backgrounds |
-| **Import/Export** | Paste JSON or drag-and-drop .json files. Backup and restore everything |
-| **i18n** | English and Russian |
+| Category | Features |
+|----------|----------|
+| **Security** | Whitelist-only execution · Dual-layer filtering `(host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)` · Fernet-encrypted secrets vault · `$SECRET{id}` substitution with output scrubbing · Parameterized commands with regex validation · Managed known_hosts (TOFU + MITM protection) · Rate limiting |
+| **Approval** | Four modes: `auto`, `pessimistic`, `optimistic`, `strict` · Real-time WebSocket notifications · Browser push notifications · Telegram and SMTP alerts |
+| **MCP Protocol** | Streamable HTTP + SSE transport · OAuth 2.0 with DCR and PKCE S256 · Per-agent Bearer tokens (90-day) · Claude.ai, Cursor, Windsurf, Continue, Cline connect natively |
+| **Authentication** | Three modes: `basic` (bcrypt + signed cookie), `proxy` (Authentik/Keycloak/Authelia), `none` (homelab behind VPN) |
+| **Agents** | Support for Claude, ChatGPT, Gemini, Cursor, Windsurf, Continue, Cline, Open WebUI, Custom · Per-agent command sets, rate limits, allowed hosts · Enable/disable toggle with instant MCP access revocation |
+| **Management** | Command Sets (Allow/Deny) · Host Setup Instructions (auto-generated bash scripts) · Import/Export (JSON paste or file upload) · SSH key lifecycle management · Dashboard with live metrics |
+| **UI** | Dark glassmorphism theme · 6 built-in color schemes · Custom backgrounds · i18n (English + Russian) · Responsive layout |
+
+---
 
 ## Screenshots
 
-| Dashboard | Hosts | Command Sets |
-|-----------|-------|-------------|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Hosts](docs/screenshots/hosts.png) | ![Command Sets](docs/screenshots/command-sets.png) |
+<table>
+<tr>
+<td align="center"><strong>Login</strong><br><img src="docs/screenshots/01_login.png" width="400"></td>
+<td align="center"><strong>Dashboard</strong><br><img src="docs/screenshots/02_dashboard.png" width="400"></td>
+</tr>
+<tr>
+<td align="center"><strong>Hosts</strong><br><img src="docs/screenshots/03_hosts.png" width="400"></td>
+<td align="center"><strong>Agents</strong><br><img src="docs/screenshots/04_agents.png" width="400"></td>
+</tr>
+<tr>
+<td align="center"><strong>Command Sets</strong><br><img src="docs/screenshots/05_command_sets.png" width="400"></td>
+<td align="center"><strong>Console</strong><br><img src="docs/screenshots/06_console.png" width="400"></td>
+</tr>
+<tr>
+<td align="center"><strong>Audit Log</strong><br><img src="docs/screenshots/07_audit.png" width="400"></td>
+<td align="center"><strong>Approvals</strong><br><img src="docs/screenshots/08_approvals.png" width="400"></td>
+</tr>
+<tr>
+<td align="center"><strong>Secrets Vault</strong><br><img src="docs/screenshots/09_secrets.png" width="400"></td>
+<td align="center"><strong>Notifications</strong><br><img src="docs/screenshots/10_alerts.png" width="400"></td>
+</tr>
+<tr>
+<td align="center"><strong>Settings</strong><br><img src="docs/screenshots/11_settings.png" width="400"></td>
+<td align="center"><strong>Appearance</strong><br><img src="docs/screenshots/12_appearance.png" width="400"></td>
+</tr>
+</table>
 
-| Secrets Vault | Audit Log | Settings |
-|---------------|-----------|----------|
-| ![Secrets](docs/screenshots/secrets.png) | ![Audit](docs/screenshots/audit.png) | ![Settings](docs/screenshots/settings.png) |
-
-| Notifications |
-|---------------|
-| ![Alerts](docs/screenshots/alerts.png) |
+---
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker Engine 24+ with Compose V2 (`docker compose` command)
+- Docker Engine 24+ with Compose V2 (`docker compose`)
 - SSH access to target servers
+- (Optional) Reverse proxy with HTTPS for remote MCP clients (Claude.ai, etc.)
 
 ### 1. Clone and configure
 
@@ -87,14 +112,16 @@ cp .env.example .env
 ```
 
 Edit `.env`:
-```bash
-# Generate a secure token
-MCP_TOKEN=$(openssl rand -hex 32)
-echo "MCP_TOKEN=$MCP_TOKEN" > .env
-echo "DATA_DIR=/data" >> .env
 
-# If you plan to connect Claude.ai or other MCP clients, set your public URL:
-echo "MCP_BASE_URL=https://mcp-gate.example.com" >> .env
+```bash
+# Required — authentication token for MCP clients
+MCP_TOKEN=$(openssl rand -hex 32)
+
+# Required if connecting Claude.ai or other external MCP clients
+MCP_BASE_URL=https://mcp-gate.example.com
+
+# Data directory (default: /data inside container)
+DATA_DIR=/data
 ```
 
 ### 2. Start
@@ -103,114 +130,163 @@ echo "MCP_BASE_URL=https://mcp-gate.example.com" >> .env
 docker compose up -d
 ```
 
-Or use the pre-built image (no build required):
+Or use the pre-built image:
 
 ```bash
-# In compose.yaml, replace `build:` section with:
+# In compose.yaml, replace `build:` with:
 #   image: ghcr.io/sv102/mcp-gate:latest
 docker compose up -d
 ```
 
-### 3. Open the UI
+### 3. First-time setup
 
-Navigate to `http://your-server:8090`. On first launch you'll be prompted to:
+Open `http://your-server:8090` in your browser.
 
-1. **Set admin password** — creates your login credentials (bcrypt-hashed, stored locally)
-2. **Bootstrap wizard** — generates SSH key pair and agent API key. **Save the API key immediately — it's shown only once.**
-
-After setup, access the UI via the login page. Authentication mode can be changed in Settings (`basic`, `proxy`, or `none`).
+1. **Set admin password** — creates your login credentials (bcrypt-hashed, stored locally in `data/config.yaml`)
+2. **Bootstrap wizard** — generates an Ed25519 SSH key pair and an agent API key. **Save the API key — it is shown only once.**
 
 ### 4. Add a host
 
-Go to **Hosts → Add Host**, fill in the hostname, SSH user, and assign command sets.
+Go to **Hosts → Add Host**:
 
-See [`docs/examples/`](docs/examples/) for sample host and command set configurations.
+1. Enter hostname/IP, SSH port, and the SSH user (default: `mcp-reader`)
+2. Assign command sets (Allow and/or Deny)
+3. Choose an approval mode (`auto`, `pessimistic`, `optimistic`, `strict`)
+4. Save
 
-### 5. Deploy the SSH key
+### 5. Prepare the target host
 
-Each host page includes a **Host Setup Instructions** section with ready-to-copy commands for creating the SSH user, deploying the public key, and configuring sudoers.
+Each host card includes a **Host Setup Instructions** section with ready-to-run commands:
 
-### 6. Connect your LLM agent
+1. Open the host details → expand "Host Setup Instructions"
+2. Click **Download .sh** to get a setup script
+3. Run the script as root on the target server:
 
-**Claude.ai / Cursor / Windsurf / Continue / Cline** (MCP connector):
-
-Add as MCP server in your client settings:
+```bash
+# On the target host:
+sudo bash setup-my-host.sh
 ```
-URL: https://your-server/mcp
-```
-The OAuth 2.0 flow handles authentication automatically.
 
-**API (custom agents):**
+This creates the SSH user, installs the public key, and configures sudoers with exact-match rules for each whitelisted sudo command.
+
+Alternatively, use the **Deploy Key** button in the host details to deploy the key over SSH automatically (requires initial password/key access).
+
+### 6. Connect your AI agent
+
+#### Claude.ai / Cursor / Windsurf / Continue / Cline (MCP protocol)
+
+In your MCP client settings, add a new MCP server:
+
+```
+URL: https://your-server/sse
+```
+
+The OAuth 2.0 authorization flow will guide you through selecting an agent and entering the MCP token.
+
+#### API (custom agents)
 
 ```bash
 curl -X POST https://your-server/api/exec \
-  -H "X-API-Key: YOUR_KEY" \
+  -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"host_id": "my-server", "command": "uptime"}'
 ```
 
+Response:
+```json
+{"status": "ok", "output": " 14:32:01 up 42 days...", "exit_code": 0, "duration_ms": 230}
+```
+
+---
+
 ## Architecture
 
 ```
-┌──────────────────────────────────────┐
-│            MCP Gate Container        │
-│                                      │
-│  FastAPI (Python 3.12)               │
-│  ├── /api/exec       ← Agent API    │
-│  ├── /api/hosts      ← Host list    │
-│  ├── /mcp            ← MCP Protocol │
-│  ├── /login          ← Auth UI      │
-│  ├── /dashboard      ← Web UI       │
-│  └── /ws/audit       ← Live events  │
-│                                      │
-│  Auth (basic/proxy/none)             │
-│  MCP Transport (Streamable HTTP+SSE) │
-│  OAuth 2.0 (DCR + PKCE S256)        │
-│  Paramiko SSH client                 │
-│  Fernet encryption (secrets)         │
-│  YAML/JSONL persistence              │
-└──────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│              MCP Gate Container              │
+│                                              │
+│  FastAPI (Python 3.12) + Uvicorn             │
+│                                              │
+│  ┌─────────────┐    ┌───────────────────┐    │
+│  │ MCP Protocol│    │    Admin WebUI    │    │
+│  │ OAuth 2.0   │    │  Alpine.js+Jinja2 │    │
+│  │ SSE + HTTP  │    │  Dashboard/Audit  │    │
+│  └──────┬──────┘    └────────┬──────────┘    │
+│         │                    │               │
+│  ┌──────▼────────────────────▼──────────┐    │
+│  │        Unified Exec Pipeline         │    │
+│  │  Auth → Whitelist → Params → Approve │    │
+│  │  → Secrets → SSH → Scrub → Audit     │    │
+│  └──────────────────┬──────────────────-┘    │
+│                     │                        │
+│  ┌──────────────────▼──────────────────┐     │
+│  │       Paramiko SSH Client           │     │
+│  │  Ed25519 keys · Managed known_hosts │     │
+│  └─────────────────────────────────────┘     │
+└──────────────────────────────────────────────┘
+         │              │              │
+    SSH to Host A   SSH to Host B   SSH to Host C
 ```
 
 ### Data Files
 
-All data is stored in human-readable YAML files (git-friendly, editable by hand):
+All data is stored in human-readable YAML/JSON files:
 
 | File | Purpose |
 |------|---------|
-| `data/config.yaml` | Main configuration (includes auth settings) |
-| `data/hosts.yaml` | SSH host definitions |
-| `data/command_sets.yaml` | Reusable command sets (Allow/Deny) |
-| `data/agents.yaml` | Agent definitions and permissions |
-| `data/secrets.yaml` | Fernet-encrypted secrets |
-| `data/audit.jsonl` | Audit log (JSONL, append-only) |
-| `data/ssh_keys/` | Generated SSH key pair + known_hosts |
+| `data/config.yaml` | Instance configuration, auth settings, appearance |
+| `data/hosts.yaml` | SSH host definitions and their command sets |
+| `data/agents.yaml` | Agent definitions, permissions, and API keys |
+| `data/command_sets.yaml` | Reusable command groups (Allow/Deny) |
+| `data/secrets.yaml` | Fernet-encrypted secrets for `$SECRET{id}` |
+| `data/audit.jsonl` | Append-only audit log |
+| `data/ssh_keys/` | Ed25519 key pair, known_hosts, Fernet key |
+
+---
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP_TOKEN` | — | **Required.** API authentication token |
-| `MCP_BASE_URL` | — | Public URL for MCP/OAuth (required for Claude.ai connector) |
-| `DATA_DIR` | `/data` | Path to persistent data directory |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MCP_TOKEN` | Yes | — | Token for MCP client authentication (OAuth approval page) |
+| `MCP_BASE_URL` | Yes* | — | Public URL for OAuth/MCP (*required for external MCP clients) |
+| `DATA_DIR` | No | `/data` | Path to persistent data directory |
 
 ### Authentication Modes
 
-Configured in Settings UI or `data/config.yaml` → `instance.auth_type`:
+| Mode | Use case | How it works |
+|------|----------|--------------|
+| `basic` | Default | Built-in login page, bcrypt password, HMAC-signed httpOnly cookie (7 days) |
+| `proxy` | Enterprise SSO | Trusts `X-Forwarded-User` / `X-Forwarded-Email` from reverse proxy (Authentik, Keycloak, Authelia) |
+| `none` | Homelab behind VPN | No auth — the network is the trust boundary |
 
-| Mode | Behavior |
-|------|----------|
-| `basic` | Built-in login page with bcrypt password and HMAC-signed session cookie (7-day expiry). Default. |
-| `proxy` | Trust reverse proxy headers (`X-Forwarded-User`, `X-Forwarded-Email`). Use with Authentik, Keycloak, etc. |
-| `none` | No authentication. For homelabs behind VPN where the network itself is the trust boundary. |
+MCP transport and agent API use their own authentication (OAuth 2.0 / API keys) independently of the UI auth mode.
 
-MCP transport and agent API endpoints use their own authentication (OAuth 2.0 / API keys) and are not affected by the UI auth mode.
+### Approval Modes
+
+| Mode | Behavior | Timeout action |
+|------|----------|----------------|
+| `auto` | Execute immediately, no approval needed | — |
+| `pessimistic` | Queue for approval, wait for human decision | Auto-**reject** |
+| `optimistic` | Queue for approval, wait for human decision | Auto-**approve** |
+| `strict` | Queue forever, no timeout | Never auto-resolves |
+
+Set per-host in host settings. Can also be overridden per-command in command set definitions.
+
+### Command Sets
+
+Two types with a clear priority rule:
+
+- **Allow** (✓) — whitelist of permitted commands
+- **Deny** (✕) — blacklist, **always wins** over allow
+
+Authorization formula: `(host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)`
 
 ### Reverse Proxy
 
-MCP Gate works behind any reverse proxy. Example for Traefik:
+MCP Gate works behind any reverse proxy. Example for **Traefik**:
 
 ```yaml
 http:
@@ -227,20 +303,30 @@ http:
           - url: "http://mcp-gate:8000"
 ```
 
-For production, consider adding IP allowlists and rate limiting at the proxy level. If using `proxy` auth mode, configure your identity provider (Authentik, Keycloak, etc.) to set `X-Forwarded-User` header.
+For **Nginx**:
 
-### Approval Modes
+```nginx
+server {
+    listen 443 ssl;
+    server_name mcp-gate.example.com;
 
-| Mode | Behavior |
-|------|----------|
-| `auto` | Execute immediately |
-| `pessimistic` | Wait for approval; timeout → reject |
-| `optimistic` | Wait for approval; timeout → execute |
-| `strict` | Wait forever until manually resolved |
+    location / {
+        proxy_pass http://localhost:8090;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}
+```
 
-### Custom Network
+### Custom Docker Network
 
-By default, MCP Gate creates its own Docker network. To join an existing network, create a `compose.override.yaml`:
+To join an existing Docker network, create `compose.override.yaml`:
 
 ```yaml
 services:
@@ -253,47 +339,87 @@ networks:
     external: true
 ```
 
-## Security
+---
 
-- **App-level authentication**: Built-in login (bcrypt + signed cookie), reverse proxy auth, or no auth — choose per deployment
-- **Whitelist-only**: Commands not in the whitelist are blocked before SSH
-- **Dual filtering**: `(host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)` — deny always wins
-- **Secrets never leak**: `$SECRET{id}` resolved server-side, scrubbed from responses and logs
-- **Parameterized commands**: regex validation, shell character blocking
-- **Full audit**: Every request, block, CRUD action, and approval decision logged
-- **Managed known_hosts**: save-on-first-connect, reject-on-key-change (MITM protection)
-- **Rate limiting**: Prevents LLM loops
-- **Dedicated SSH key**: Ed25519, generated on first boot
+## Updating
+
+```bash
+cd mcp-gate
+git pull
+docker compose build --no-cache
+docker compose up -d
+```
+
+Your data in `./data/` is preserved across updates.
+
+---
+
+## Security Model
+
+```
+LLM Agent → request "sudo zpool status"
+    │
+    ├─ Layer 1: MCP Gate Whitelist (command sets)
+    │  Checks: Is this command in the effective allow list?
+    │  No → blocked (never reaches the host)
+    │
+    ├─ Layer 2: Approval Mode
+    │  pessimistic/optimistic/strict → queued for human decision
+    │  auto → proceed to execution
+    │
+    └─ Layer 3: Linux Sudoers on host
+       Checks: Can mcp-reader run sudo for this command?
+       No → permission denied
+```
+
+**Secrets** are resolved server-side (`$SECRET{id}` → actual value) and scrubbed from all outputs and logs. The LLM never sees the secret value.
+
+**SSH keys** are Ed25519, generated on first boot. Known hosts are managed with Trust-On-First-Use (TOFU) policy and reject-on-key-change (MITM protection).
+
+---
 
 ## API Reference
 
 ### Execute Command
-```
+
+```http
 POST /api/exec
-Headers: X-API-Key: YOUR_KEY
-Body: {"host_id": "srv", "command": "uptime"}
-→ {"status": "ok", "output": "...", "duration_ms": 230}
+X-API-Key: YOUR_KEY
+Content-Type: application/json
+
+{"host_id": "srv", "command": "uptime"}
 ```
 
 ### Execute with Parameters
-```
+
+```http
 POST /api/exec
-Body: {"host_id": "srv", "command": "docker logs {container} --tail {lines}", "args": {"container": "nginx", "lines": "50"}}
+
+{"host_id": "srv", "command": "docker logs {container} --tail {lines}", "args": {"container": "nginx", "lines": "50"}}
 ```
 
-### List Hosts
-```
-GET /api/hosts → [{id, name, commands, command_sets}]
+### List Available Hosts
+
+```http
+GET /api/hosts
 ```
 
-### Health
-```
-GET /health → {"status": "ok", "version": "0.0.7", "hosts_total": 2}
+### Health Check
+
+```http
+GET /health → {"status": "ok", "version": "0.1.2", "hosts": 3, "agents": 2}
 ```
 
-## Tech Stack
+### MCP Protocol
 
-Python 3.12 · FastAPI · Paramiko · Fernet · bcrypt · Jinja2 + Alpine.js · YAML/JSONL · Docker
+```http
+POST /        ← Streamable HTTP (JSON-RPC 2.0)
+GET  /sse     ← SSE fallback
+```
+
+MCP tools: `exec_command`, `list_hosts`, `server_health`
+
+---
 
 ## Roadmap
 
@@ -301,13 +427,15 @@ Python 3.12 · FastAPI · Paramiko · Fernet · bcrypt · Jinja2 + Alpine.js · 
 - [ ] HTTP Service Proxy (forward requests to internal services)
 - [ ] Scheduled/cron commands
 - [ ] Webhooks
+- [ ] Host groups and batch approval
+- [ ] SSH Certificate Authority (CA) support
 - [ ] Official Docker Hub image
+
+---
 
 ## Support the Project
 
 If MCP Gate is useful to you, consider supporting its development:
-
-**Cryptocurrency:**
 
 | Currency | Address |
 |----------|---------|
@@ -318,13 +446,25 @@ If MCP Gate is useful to you, consider supporting its development:
 
 You can also ⭐ **star this repository** — it helps with visibility and costs nothing!
 
+---
+
 ## License
 
-[AGPLv3](LICENSE) — Free for self-hosted use. If you modify and offer it as a service, you must share the source.
+[AGPLv3](LICENSE) — Free to self-host and modify. If you offer a modified version as a network service, you must share the source code.
+
+See [NOTICE](NOTICE) for third-party attributions.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). All contributions require a Developer Certificate of Origin (sign-off).
+
+## Security
+
+Found a vulnerability? See [SECURITY.md](SECURITY.md) for responsible disclosure.
 
 ## Author
 
-**Sergey** — [@sv_102](https://t.me/sv_102) · [GitHub](https://github.com/sv102)
+**Sergey Napalkov** — [@sv_102](https://t.me/sv_102) · [GitHub](https://github.com/sv102)
 
 ---
 

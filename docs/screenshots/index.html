@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MCP Gate — Screenshots</title>
+<style>
+  :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d37; --text: #e0e0e0;
+          --text2: #888; --accent: #818cf8; --accent-dim: #5558c0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
+         color: var(--text); min-height: 100vh; }
+  .header { text-align: center; padding: 40px 20px 20px; }
+  .header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .header h1 span { color: var(--accent); }
+  .header .meta { font-size: 13px; color: var(--text2); }
+  .header .meta b { color: var(--text); font-weight: 500; }
+  .controls { display: flex; justify-content: center; gap: 8px; padding: 16px 20px;
+              flex-wrap: wrap; }
+  .controls button { background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); padding: 8px 16px; font-size: 13px;
+    cursor: pointer; transition: .15s; }
+  .controls button:hover, .controls button.active { background: var(--accent-dim);
+    border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+          gap: 20px; padding: 20px 40px 60px; max-width: 1800px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          overflow: hidden; transition: transform .15s, box-shadow .15s; cursor: pointer; }
+  .card:hover { transform: translateY(-4px);
+                box-shadow: 0 8px 32px rgba(129,140,248,0.15); }
+  .card img { width: 100%; display: block; border-bottom: 1px solid var(--border); }
+  .card .info { padding: 14px 16px; }
+  .card .info h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .card .info p { font-size: 12px; color: var(--text2); line-height: 1.4; }
+  .card .info .badge { display: inline-block; font-size: 11px; color: var(--accent);
+    background: rgba(129,140,248,0.1); padding: 2px 8px; border-radius: 4px;
+    margin-top: 6px; }
+  /* Lightbox */
+  .lb { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92);
+        z-index: 100; align-items: center; justify-content: center; flex-direction: column; }
+  .lb.open { display: flex; }
+  .lb img { max-width: 95vw; max-height: 85vh; border-radius: 8px;
+            box-shadow: 0 0 60px rgba(0,0,0,0.5); }
+  .lb .caption { color: var(--text); font-size: 16px; font-weight: 600; margin-top: 16px; }
+  .lb .sub { color: var(--text2); font-size: 13px; margin-top: 4px; }
+  .lb .nav { position: absolute; top: 50%; transform: translateY(-50%);
+             font-size: 40px; color: #fff; cursor: pointer; padding: 20px;
+             user-select: none; opacity: 0.6; transition: .15s; }
+  .lb .nav:hover { opacity: 1; }
+  .lb .nav.prev { left: 10px; }
+  .lb .nav.next { right: 10px; }
+  .lb .close { position: absolute; top: 20px; right: 30px; font-size: 32px;
+               color: #fff; cursor: pointer; opacity: 0.6; transition: .15s; }
+  .lb .close:hover { opacity: 1; }
+  .lb .counter { position: absolute; top: 24px; left: 30px; color: var(--text2);
+                 font-size: 14px; }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; padding: 12px; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🔐 <span>MCP Gate</span> — Screenshots</h1>
+  <p class="meta">
+    <b>14</b> pages &nbsp;·&nbsp;
+    <b>1440×900</b> viewport &nbsp;·&nbsp;
+    captured <b>2026-04-01 12:17:59</b>
+  </p>
+</div>
+
+<div class="controls">
+  <button class="active" onclick="filter('all')">All (14)</button>
+  <button onclick="filter('core')">Core</button>
+  <button onclick="filter('security')">Security</button>
+  <button onclick="filter('config')">Config</button>
+</div>
+
+<div class="grid" id="grid">
+  <div class="card" data-tags="security" onclick="openLb(0)">
+    <img src="01_login.png" alt="Login" loading="lazy">
+    <div class="info">
+      <h3>Login</h3>
+      <p>Authentication page with password form</p>
+      <span class="badge">1163 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="core" onclick="openLb(1)">
+    <img src="02_dashboard.png" alt="Dashboard" loading="lazy">
+    <div class="info">
+      <h3>Dashboard</h3>
+      <p>Overview: hosts, agents, recent activity, pending approvals</p>
+      <span class="badge">517 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="core" onclick="openLb(2)">
+    <img src="03_hosts.png" alt="Hosts" loading="lazy">
+    <div class="info">
+      <h3>Hosts</h3>
+      <p>SSH host management — add, configure, assign command sets</p>
+      <span class="badge">1158 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="core" onclick="openLb(3)">
+    <img src="04_agents.png" alt="Agents" loading="lazy">
+    <div class="info">
+      <h3>Agents</h3>
+      <p>AI agent configuration — API keys, permissions, rate limits</p>
+      <span class="badge">1211 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="core" onclick="openLb(4)">
+    <img src="05_command_sets.png" alt="Command Sets" loading="lazy">
+    <div class="info">
+      <h3>Command Sets</h3>
+      <p>Allow/deny command groups with pattern matching</p>
+      <span class="badge">523 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="core" onclick="openLb(5)">
+    <img src="06_console.png" alt="Console" loading="lazy">
+    <div class="info">
+      <h3>Console</h3>
+      <p>Interactive SSH terminal — execute commands on hosts</p>
+      <span class="badge">1125 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="security" onclick="openLb(6)">
+    <img src="07_audit.png" alt="Audit Log" loading="lazy">
+    <div class="info">
+      <h3>Audit Log</h3>
+      <p>Full history of all executed commands with filters</p>
+      <span class="badge">573 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="security" onclick="openLb(7)">
+    <img src="08_approvals.png" alt="Approvals" loading="lazy">
+    <div class="info">
+      <h3>Approvals</h3>
+      <p>Pending command approvals queue (pessimistic mode)</p>
+      <span class="badge">1211 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="security" onclick="openLb(8)">
+    <img src="09_secrets.png" alt="Secrets" loading="lazy">
+    <div class="info">
+      <h3>Secrets</h3>
+      <p>Encrypted secret storage — inject into commands securely</p>
+      <span class="badge">1155 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="security" onclick="openLb(9)">
+    <img src="10_alerts.png" alt="Alerts" loading="lazy">
+    <div class="info">
+      <h3>Alerts</h3>
+      <p>Notification rules — Telegram and SMTP alerts</p>
+      <span class="badge">498 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="config" onclick="openLb(10)">
+    <img src="11_settings.png" alt="Settings" loading="lazy">
+    <div class="info">
+      <h3>Settings</h3>
+      <p>Instance configuration — auth, SSH, notifications</p>
+      <span class="badge">478 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="config" onclick="openLb(11)">
+    <img src="12_appearance.png" alt="Appearance" loading="lazy">
+    <div class="info">
+      <h3>Appearance</h3>
+      <p>Theme editor — colors, background, glass effects</p>
+      <span class="badge">1094 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="config" onclick="openLb(12)">
+    <img src="13_guide.png" alt="Guide" loading="lazy">
+    <div class="info">
+      <h3>Guide</h3>
+      <p>Built-in setup and usage guide</p>
+      <span class="badge">716 KB</span>
+    </div>
+  </div>
+  <div class="card" data-tags="config" onclick="openLb(13)">
+    <img src="14_about.png" alt="About" loading="lazy">
+    <div class="info">
+      <h3>About</h3>
+      <p>System info — version, stats, diagnostics</p>
+      <span class="badge">734 KB</span>
+    </div>
+  </div>
+</div>
+
+<div class="lb" id="lb">
+  <span class="close" onclick="closeLb()">&times;</span>
+  <span class="counter" id="lbCounter"></span>
+  <span class="nav prev" onclick="navLb(-1)">&#8249;</span>
+  <span class="nav next" onclick="navLb(1)">&#8250;</span>
+  <img id="lbImg" src="" alt="">
+  <div class="caption" id="lbCaption"></div>
+  <div class="sub" id="lbSub"></div>
+</div>
+
+<script>
+const items = [{"file":"01_login.png","title":"Login","desc":"Authentication page with password form","size":"1163 KB"},{"file":"02_dashboard.png","title":"Dashboard","desc":"Overview: hosts, agents, recent activity, pending approvals","size":"517 KB"},{"file":"03_hosts.png","title":"Hosts","desc":"SSH host management — add, configure, assign command sets","size":"1158 KB"},{"file":"04_agents.png","title":"Agents","desc":"AI agent configuration — API keys, permissions, rate limits","size":"1211 KB"},{"file":"05_command_sets.png","title":"Command Sets","desc":"Allow/deny command groups with pattern matching","size":"523 KB"},{"file":"06_console.png","title":"Console","desc":"Interactive SSH terminal — execute commands on hosts","size":"1125 KB"},{"file":"07_audit.png","title":"Audit Log","desc":"Full history of all executed commands with filters","size":"573 KB"},{"file":"08_approvals.png","title":"Approvals","desc":"Pending command approvals queue (pessimistic mode)","size":"1211 KB"},{"file":"09_secrets.png","title":"Secrets","desc":"Encrypted secret storage — inject into commands securely","size":"1155 KB"},{"file":"10_alerts.png","title":"Alerts","desc":"Notification rules — Telegram and SMTP alerts","size":"498 KB"},{"file":"11_settings.png","title":"Settings","desc":"Instance configuration — auth, SSH, notifications","size":"478 KB"},{"file":"12_appearance.png","title":"Appearance","desc":"Theme editor — colors, background, glass effects","size":"1094 KB"},{"file":"13_guide.png","title":"Guide","desc":"Built-in setup and usage guide","size":"716 KB"},{"file":"14_about.png","title":"About","desc":"System info — version, stats, diagnostics","size":"734 KB"}];
+let current = 0;
+
+function openLb(i) {
+  current = i;
+  renderLb();
+  document.getElementById('lb').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeLb() {
+  document.getElementById('lb').classList.remove('open');
+  document.body.style.overflow = '';
+}
+function navLb(d) {
+  current = (current + d + items.length) % items.length;
+  renderLb();
+}
+function renderLb() {
+  document.getElementById('lbImg').src = items[current].file;
+  document.getElementById('lbCaption').textContent = items[current].title;
+  document.getElementById('lbSub').textContent = items[current].desc;
+  document.getElementById('lbCounter').textContent = (current+1) + ' / ' + items.length;
+}
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('lb').classList.contains('open')) return;
+  if (e.key === 'Escape') closeLb();
+  if (e.key === 'ArrowLeft') navLb(-1);
+  if (e.key === 'ArrowRight') navLb(1);
+});
+
+function filter(tag) {
+  document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.querySelectorAll('.card').forEach(c => {
+    const tags = c.dataset.tags;
+    c.style.display = (tag === 'all' || tags.includes(tag)) ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>

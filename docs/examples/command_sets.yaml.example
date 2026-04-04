@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
+# https://github.com/sv102/mcp-gate
 # Example: command_sets.yaml
 # Reusable groups of commands that attach to hosts and agents via tags.
 # Two types: "allow" (whitelist) and "deny" (blacklist, highest priority).

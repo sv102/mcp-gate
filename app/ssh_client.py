@@ -3,9 +3,11 @@
 # https://github.com/sv102/mcp-gate
 """
 ssh_client.py — SSH client for mcp-gate.
-Managed known_hosts: saves fingerprint on first connect, verifies after.
+Managed known_hosts, key rotation, per-host keys, fingerprinting.
 """
 
+import base64
+import hashlib
 import os
 import subprocess
 import time
@@ -21,9 +23,35 @@ log = logging.getLogger("mcp-gate.ssh")
 SSH_TIMEOUT = 30
 MAX_OUTPUT_BYTES = 65536
 KNOWN_HOSTS_FILE = SSH_KEYS_DIR / "known_hosts"
+DEFAULT_KEY_NAME = "mcp_ed25519"
 
 
-def generate_keypair(key_name: str = "mcp_ed25519") -> tuple[str, str]:
+# ═══ Key Path Validation ═══
+
+def validate_key_path(path_str: str) -> bool:
+    """Validate that key_path is safe (inside SSH_KEYS_DIR, no traversal)."""
+    try:
+        p = Path(path_str).resolve()
+        base = SSH_KEYS_DIR.resolve()
+        return str(p).startswith(str(base) + "/") or p == base
+    except Exception:
+        return False
+
+
+def safe_key_name(key_name: str) -> str:
+    """Sanitize key name — alphanumeric, dash, underscore only."""
+    import re
+    cleaned = re.sub(r'[^a-zA-Z0-9_-]', '', key_name)
+    if not cleaned:
+        cleaned = DEFAULT_KEY_NAME
+    return cleaned
+
+
+# ═══ Key Generation & Rotation ═══
+
+def generate_keypair(key_name: str = DEFAULT_KEY_NAME) -> tuple[str, str]:
+    """Generate Ed25519 keypair if not exists. Idempotent."""
+    key_name = safe_key_name(key_name)
     priv_path = SSH_KEYS_DIR / key_name
     pub_path = SSH_KEYS_DIR / f"{key_name}.pub"
 
@@ -34,6 +62,7 @@ def generate_keypair(key_name: str = "mcp_ed25519") -> tuple[str, str]:
             pub_str = f"ssh-ed25519 {key.get_base64()} mcp-gate"
         return str(priv_path), pub_str
 
+    SSH_KEYS_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.run([
         "ssh-keygen", "-t", "ed25519", "-f", str(priv_path),
         "-N", "", "-C", "mcp-gate"
@@ -44,18 +73,272 @@ def generate_keypair(key_name: str = "mcp_ed25519") -> tuple[str, str]:
     return str(priv_path), pub_str
 
 
-def get_public_key(key_name: str = "mcp_ed25519") -> Optional[str]:
+def rotate_keypair(key_name: str = DEFAULT_KEY_NAME) -> tuple[str, str]:
+    """Delete existing keypair and generate a new one. Returns (priv_path, pub_str)."""
+    key_name = safe_key_name(key_name)
+    priv_path = SSH_KEYS_DIR / key_name
+    pub_path = SSH_KEYS_DIR / f"{key_name}.pub"
+
+    # Delete old keypair
+    if priv_path.exists():
+        priv_path.unlink()
+    if pub_path.exists():
+        pub_path.unlink()
+
+    log.info(f"Rotated SSH keypair: {key_name}")
+    return generate_keypair(key_name)
+
+
+# ═══ Key Info ═══
+
+def get_public_key(key_name: str = DEFAULT_KEY_NAME) -> Optional[str]:
+    """Get public key string for a given key name."""
+    key_name = safe_key_name(key_name)
     pub_path = SSH_KEYS_DIR / f"{key_name}.pub"
     if pub_path.exists():
         return pub_path.read_text().strip()
     return None
 
 
+def get_fingerprint(key_name: str = DEFAULT_KEY_NAME) -> Optional[str]:
+    """Get SHA256 fingerprint of public key (like ssh-keygen -lf)."""
+    pub_str = get_public_key(key_name)
+    if not pub_str:
+        return None
+    try:
+        parts = pub_str.split()
+        if len(parts) < 2:
+            return None
+        raw = base64.b64decode(parts[1])
+        digest = hashlib.sha256(raw).digest()
+        fp = base64.b64encode(digest).rstrip(b'=').decode('ascii')
+        return f"SHA256:{fp}"
+    except Exception as e:
+        log.warning(f"Failed to compute fingerprint for {key_name}: {e}")
+        return None
+
+
+def get_key_metadata(key_name: str = DEFAULT_KEY_NAME) -> Optional[dict]:
+    """Get metadata for a keypair: fingerprint, created_at, age_days, public_key."""
+    key_name = safe_key_name(key_name)
+    priv_path = SSH_KEYS_DIR / key_name
+    pub_path = SSH_KEYS_DIR / f"{key_name}.pub"
+
+    if not priv_path.exists():
+        return None
+
+    created_at = priv_path.stat().st_mtime
+    age_days = int((time.time() - created_at) / 86400)
+    pub_str = get_public_key(key_name)
+    fp = get_fingerprint(key_name)
+
+    return {
+        "key_name": key_name,
+        "fingerprint": fp,
+        "public_key": pub_str,
+        "created_at": created_at,
+        "age_days": age_days,
+        "path": str(priv_path),
+        "is_default": key_name == DEFAULT_KEY_NAME,
+    }
+
+
+def list_keys() -> list[dict]:
+    """List all SSH keypairs in SSH_KEYS_DIR with metadata."""
+    keys = []
+    if not SSH_KEYS_DIR.exists():
+        return keys
+    seen = set()
+    for f in sorted(SSH_KEYS_DIR.iterdir()):
+        if f.suffix == '.pub':
+            key_name = f.stem
+            if key_name in seen:
+                continue
+            seen.add(key_name)
+            meta = get_key_metadata(key_name)
+            if meta:
+                keys.append(meta)
+        elif not f.suffix and f.name not in ('known_hosts', 'secrets.key'):
+            key_name = f.name
+            if key_name in seen:
+                continue
+            seen.add(key_name)
+            meta = get_key_metadata(key_name)
+            if meta:
+                keys.append(meta)
+    return keys
+
+
+# ═══ Known Hosts Management ═══
+
+def clear_known_host(hostname: str, port: int = 22) -> bool:
+    """Remove a specific host from known_hosts file."""
+    if not KNOWN_HOSTS_FILE.exists():
+        return False
+
+    try:
+        hk = paramiko.HostKeys(str(KNOWN_HOSTS_FILE))
+    except Exception:
+        return False
+
+    # paramiko uses "[host]:port" for non-standard ports, plain "host" for 22
+    lookup_name = f"[{hostname}]:{port}" if port != 22 else hostname
+    removed = False
+
+    # Try both formats
+    for name in (lookup_name, hostname, f"[{hostname}]:{port}"):
+        if name in hk:
+            del hk[name]
+            removed = True
+
+    if removed:
+        try:
+            hk.save(str(KNOWN_HOSTS_FILE))
+            log.info(f"Cleared known_hosts entry for {hostname}:{port}")
+        except Exception as e:
+            log.warning(f"Failed to save known_hosts after clearing {hostname}: {e}")
+            return False
+
+    return removed
+
+
+def get_known_hosts_info() -> list[dict]:
+    """List all entries in known_hosts with fingerprints."""
+    if not KNOWN_HOSTS_FILE.exists():
+        return []
+    entries = []
+    try:
+        hk = paramiko.HostKeys(str(KNOWN_HOSTS_FILE))
+        for hostname in hk:
+            for key_type in hk[hostname]:
+                key = hk[hostname][key_type]
+                raw = key.asbytes()
+                digest = hashlib.sha256(raw).digest()
+                fp = "SHA256:" + base64.b64encode(digest).rstrip(b'=').decode('ascii')
+                entries.append({
+                    "hostname": hostname,
+                    "key_type": key_type,
+                    "fingerprint": fp,
+                })
+    except Exception as e:
+        log.warning(f"Failed to read known_hosts: {e}")
+    return entries
+
+
+# ═══ Deploy Script Generation ═══
+
+def get_deploy_script(hosts: list[dict], key_name: str = DEFAULT_KEY_NAME) -> str:
+    """Generate a bash script to deploy the public key to all hosts."""
+    pub = get_public_key(key_name)
+    if not pub:
+        return "# ERROR: Public key not found. Generate a keypair first."
+
+    lines = [
+        "#!/bin/bash",
+        "# MCP Gate — Deploy SSH public key to managed hosts",
+        f"# Key: {key_name}",
+        f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        "#",
+        "# Run this script from a machine that has root/sudo access to all hosts.",
+        "# The script creates the user, .ssh dir, and authorized_keys.",
+        "",
+        f'PUBKEY="{pub}"',
+        "",
+    ]
+
+    for h in hosts:
+        if not h.get("enabled", True):
+            continue
+        user = h.get("user", "mcp-reader")
+        hostname = h.get("hostname", "")
+        port = h.get("port", 22)
+        hid = h.get("id", hostname)
+        ssh_target = f"{hostname}" if port == 22 else f"-p {port} {hostname}"
+        lines.extend([
+            f"# ── Host: {hid} ({hostname}:{port}) ──",
+            f'echo ">>> Deploying to {hid} ({hostname})..."',
+            f'ssh root@{ssh_target} bash -s << \'DEPLOY_EOF\'',
+            f"  id {user} &>/dev/null || useradd -m -s /bin/bash {user}",
+            f"  mkdir -p /home/{user}/.ssh",
+            f'  echo "{pub}" > /home/{user}/.ssh/authorized_keys',
+            f"  chmod 700 /home/{user}/.ssh",
+            f"  chmod 600 /home/{user}/.ssh/authorized_keys",
+            f"  chown -R {user}:{user} /home/{user}/.ssh",
+            f'  echo "  OK: {user}@{hostname}"',
+            "DEPLOY_EOF",
+            "",
+        ])
+
+    lines.append('echo "Done. Run mass test from MCP Gate UI to verify."')
+    return "\n".join(lines)
+
+
+def get_single_host_deploy_cmd(host: dict, key_name: str = DEFAULT_KEY_NAME) -> Optional[str]:
+    """Get the authorized_keys update command for a single host (for auto-deploy variant B)."""
+    pub = get_public_key(key_name)
+    if not pub:
+        return None
+    user = host.get("user", "mcp-reader")
+    return (
+        f"mkdir -p /home/{user}/.ssh && "
+        f"echo '{pub}' > /home/{user}/.ssh/authorized_keys && "
+        f"chmod 700 /home/{user}/.ssh && "
+        f"chmod 600 /home/{user}/.ssh/authorized_keys && "
+        f"chown -R {user}:{user} /home/{user}/.ssh && "
+        f"echo 'key deployed for {user}'"
+    )
+
+
+# ═══ Auto Deploy (Variant B) ═══
+
+def deploy_key_to_host(host: dict, new_key_name: str = DEFAULT_KEY_NAME,
+                       old_key_name: Optional[str] = None) -> dict:
+    """Deploy new public key to host via SSH.
+    Uses old_key_name to connect (if provided), deploys new_key_name.
+    This is Variant B: requires 'mcp-gate-update-key' in host command set."""
+    cmd = get_single_host_deploy_cmd(host, new_key_name)
+    if not cmd:
+        return {"ok": False, "message": "Public key not found"}
+
+    # If old key specified, temporarily override host key_path
+    connect_host = dict(host)
+    if old_key_name:
+        connect_host["key_path"] = str(SSH_KEYS_DIR / safe_key_name(old_key_name))
+
+    t0 = time.time()
+    try:
+        client = _connect(connect_host)
+        _, stdout, stderr = client.exec_command(cmd, timeout=SSH_TIMEOUT)
+        exit_code = stdout.channel.recv_exit_status()
+        out = stdout.read(MAX_OUTPUT_BYTES).decode("utf-8", errors="replace")
+        err = stderr.read(MAX_OUTPUT_BYTES).decode("utf-8", errors="replace")
+        client.close()
+        duration_ms = int((time.time() - t0) * 1000)
+
+        if exit_code == 0:
+            return {"ok": True, "message": out.strip(), "duration_ms": duration_ms}
+        else:
+            return {"ok": False, "message": f"exit {exit_code}: {err.strip()}", "duration_ms": duration_ms}
+    except Exception as e:
+        return {"ok": False, "message": str(e), "duration_ms": int((time.time() - t0) * 1000)}
+
+
+# ═══ Connection & Execution ═══
+
 def test_connection(host: dict) -> dict:
+    """Test SSH connection to host. Returns fingerprint info."""
     try:
         client = _connect(host)
+        transport = client.get_transport()
+        remote_key = transport.get_remote_server_key() if transport else None
+        info = {"ok": True, "message": "Connection successful"}
+        if remote_key:
+            raw = remote_key.asbytes()
+            digest = hashlib.sha256(raw).digest()
+            info["host_fingerprint"] = "SHA256:" + base64.b64encode(digest).rstrip(b'=').decode('ascii')
+            info["host_key_type"] = remote_key.get_name()
         client.close()
-        return {"ok": True, "message": "Connection successful"}
+        return info
     except Exception as e:
         return {"ok": False, "message": str(e)}
 
@@ -107,13 +390,11 @@ class _ManagedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
         host_keys = client.get_host_keys()
         existing = host_keys.lookup(hostname)
         if existing:
-            # Key changed — potential MITM
             log.warning(f"HOST KEY CHANGED for {hostname}! Rejecting.")
             raise paramiko.SSHException(
                 f"Host key for {hostname} has changed. "
                 f"Remove old key from {KNOWN_HOSTS_FILE} if this is expected."
             )
-        # First connection — save key
         log.info(f"Saving new host key for {hostname}")
         host_keys.add(hostname, key.get_name(), key)
         try:
@@ -126,7 +407,6 @@ class _ManagedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
 def _connect(host: dict) -> paramiko.SSHClient:
     client = paramiko.SSHClient()
 
-    # Load known hosts if exists
     if KNOWN_HOSTS_FILE.exists():
         try:
             client.load_host_keys(str(KNOWN_HOSTS_FILE))
@@ -135,7 +415,13 @@ def _connect(host: dict) -> paramiko.SSHClient:
 
     client.set_missing_host_key_policy(_ManagedHostKeyPolicy())
 
-    key_path = host.get("key_path", str(SSH_KEYS_DIR / "mcp_ed25519"))
+    key_path = host.get("key_path", str(SSH_KEYS_DIR / DEFAULT_KEY_NAME))
+
+    # Validate key_path
+    if not validate_key_path(key_path):
+        log.warning(f"Invalid key_path: {key_path}, falling back to default")
+        key_path = str(SSH_KEYS_DIR / DEFAULT_KEY_NAME)
+
     pkey = paramiko.Ed25519Key.from_private_key_file(key_path)
 
     client.connect(

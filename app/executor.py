@@ -166,11 +166,20 @@ async def execute_command(
 
     # ── 4. Queue for approval (pessimistic / optimistic / strict) ──
     timeout = host.get("approval_timeout", 300)
-    aid = storage.add_to_queue({
+    item = {
         "host_id": host["id"], "command": command, "resolved": resolved_cmd,
         "source": source, "agent_id": agent_id, "approval_mode": mode,
         "timeout": timeout if mode != "strict" else 0,
-    })
+    }
+    aid = storage.add_to_queue(item)
+    # Broadcast pending approval to WebSocket for real-time UI updates
+    pending_event = {
+        "host_id": host["id"], "command": command, "source": source,
+        "agent_id": agent_id, "status": "pending", "approval_id": aid,
+        "approval_mode": mode, "timeout": timeout if mode != "strict" else 0,
+        "created_at": time.time(),
+    }
+    await _bcast(pending_event)
     await notifications.notify("approval",
                                f"Pending\n{host['id']}: {command}\nMode: {mode}")
     return {

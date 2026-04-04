@@ -3,7 +3,7 @@
 # https://github.com/sv102/mcp-gate
 """models.py — Pydantic models for MCP Gate API."""
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class ExecReq(BaseModel):
@@ -20,6 +20,19 @@ class HostM(BaseModel):
     rate_limit: int = 10; exec_delay: float = 0; max_output_lines: int = 200; ssh_timeout: int = 30
     command_sets: list[str] = []; whitelist: list[dict] = []; description: str = ""
     sandbox_path: str = ""
+
+    @field_validator("key_path")
+    @classmethod
+    def validate_key_path(cls, v: str) -> str:
+        """Ensure key_path stays within /data/ssh_keys/."""
+        import os
+        if not v:
+            return "/data/ssh_keys/mcp_ed25519"
+        # Resolve and check for path traversal
+        resolved = os.path.normpath(v)
+        if ".." in resolved or not resolved.startswith("/data/ssh_keys/"):
+            raise ValueError(f"key_path must be within /data/ssh_keys/, got: {v}")
+        return resolved
 
 
 class ModeChg(BaseModel):
