@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/sv102/mcp-gate/releases"><img src="https://img.shields.io/github/v/release/sv102/mcp-gate?label=version" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/docker-compose%20V2-2496ED.svg" alt="Docker">

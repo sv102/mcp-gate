@@ -1,0 +1,11 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sv102/mcp-gate",
+  "title": "MCP Gate",
+  "description": "Secure SSH gateway for AI agents — whitelist-only command execution, multi-tier approval workflow, secrets vault, full audit trail. Self-hosted, AGPLv3.",
+  "repository": {
+    "url": "https://github.com/sv102/mcp-gate",
+    "source": "github"
+  },
+  "version": "0.1.2"
+}
