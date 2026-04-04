@@ -3,9 +3,9 @@
 # https://github.com/sv102/mcp-gate
 """mcp_transport.py — MCP Protocol Transport for mcp-gate.
 SSE + JSON-RPC 2.0 + OAuth 2.0. OAuth token bound to agent_id.
-Tools: exec_command, list_hosts, server_health
+Tools: exec_command, list_hosts, list_capabilities, server_health
 """
-import asyncio, json, os, secrets, time, logging
+import asyncio, json, os, secrets, time, logging, difflib
 from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Request, HTTPException, Form
 from fastapi.responses import StreamingResponse, HTMLResponse, RedirectResponse, JSONResponse
@@ -16,13 +16,6 @@ _bcast_fn = None
 def set_bcast(fn):
     global _bcast_fn
     _bcast_fn = fn
-
-def _schedule_bcast(entry):
-    if _bcast_fn:
-        try:
-            asyncio.get_event_loop().create_task(_bcast_fn(entry))
-        except Exception:
-            pass
 
 log = logging.getLogger("mcp-gate.mcp")
 
@@ -36,16 +29,15 @@ from constants import VERSION, full_version
 # access_tokens are persisted to TOKENS_FILE (mcp_oauth_tokens.json) and survive restarts.
 oauth_clients: dict = {}
 auth_codes: dict = {}
-access_tokens: dict = {}
 
 def _load_tokens() -> dict:
     try:
-        with open(TOKENS_FILE) as f:
-            data = json.load(f)
-        now = time.time()
-        return {k: v for k, v in data.items() if v.get("expires", 0) > now}
+        if os.path.exists(TOKENS_FILE):
+            with open(TOKENS_FILE) as f:
+                return json.load(f)
     except Exception:
-        return {}
+        pass
+    return {}
 
 def _save_tokens(tokens: dict):
     try:
@@ -80,30 +72,133 @@ def _require_mcp_auth(request: Request) -> dict:
             raise HTTPException(403, f"Agent '{agent_id}' is disabled")
     return entry
 
-TOOLS = [
-    {
-        "name": "exec_command",
-        "description": "Execute a command on a managed SSH host. The command must be allowed by the host's and agent's command sets. Secrets ($SECRET{id}) are substituted automatically.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "host_id": {"type": "string", "description": "Host identifier"},
-                "command": {"type": "string", "description": "Shell command to execute"},
+
+# ═══════════════════════════════════════════════════════════════════
+#  Dynamic tool descriptions — per-agent
+# ═══════════════════════════════════════════════════════════════════
+
+def _build_capabilities_summary(agent_id: str) -> str:
+    """Build a compact summary of allowed hosts + command sets for this agent.
+    Used in exec_command tool description so the LLM knows what's available upfront."""
+    agent = storage.get_agent(agent_id) if agent_id else None
+    allowed_hosts = agent.get("allowed_hosts", []) if agent else []
+    agent_cs = set(agent.get("command_sets", [])) if agent else set()
+
+    lines = []
+    for h in storage.load_hosts():
+        if not h.get("enabled", True):
+            continue
+        if allowed_hosts and h["id"] not in allowed_hosts:
+            continue
+
+        host_cs_ids = h.get("command_sets", [])
+        # Effective sets = intersection of host sets with agent sets (if agent has sets)
+        if agent_cs:
+            effective_cs_ids = [sid for sid in host_cs_ids if sid in agent_cs]
+        else:
+            effective_cs_ids = host_cs_ids
+
+        # Filter to allow-type only
+        cs_summaries = []
+        for sid in effective_cs_ids:
+            cs = storage.get_command_set(sid)
+            if not cs or not cs.get("enabled", True):
+                continue
+            if cs.get("type", "allow") != "allow":
+                continue
+            cmds = cs.get("commands", [])
+            # Show first 3 commands as examples
+            examples = [c["cmd"] for c in cmds[:3]]
+            suffix = f" (+{len(cmds)-3} more)" if len(cmds) > 3 else ""
+            cs_summaries.append(f"  {sid}: {', '.join(examples)}{suffix}")
+
+        if cs_summaries:
+            mode = h.get("approval_mode", "pessimistic")
+            lines.append(f"Host '{h['id']}' (mode={mode}):")
+            lines.extend(cs_summaries)
+
+    return "\n".join(lines) if lines else "No hosts available."
+
+
+def _build_tools(agent_id: str) -> list:
+    """Generate MCP tool list with agent-specific descriptions."""
+    caps = _build_capabilities_summary(agent_id)
+
+    return [
+        {
+            "name": "exec_command",
+            "description": (
+                "Execute a command on a managed SSH host. "
+                "Commands must EXACTLY match the whitelist — any deviation is blocked.\n"
+                "For parameterized commands, pass parameters in the 'args' field.\n\n"
+                "AVAILABLE COMMANDS FOR THIS AGENT:\n"
+                f"{caps}\n\n"
+                "Use list_capabilities for full command list with parameters and examples."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "host_id": {"type": "string", "description": "Host identifier"},
+                    "command": {"type": "string", "description": "Shell command to execute (must match whitelist exactly)"},
+                    "args": {"type": "object", "description": "Parameters for parameterized commands (e.g. {\"path\": \"/opt/app\", \"lines\": \"50\"})"},
+                },
+                "required": ["host_id", "command"],
             },
-            "required": ["host_id", "command"],
         },
-    },
-    {
-        "name": "list_hosts",
-        "description": "List SSH hosts available to the current agent, with status and command sets.",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "server_health",
-        "description": "Get mcp-gate server health: version, host count, agent count.",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-]
+        {
+            "name": "list_hosts",
+            "description": "List SSH hosts available to the current agent, with status and command sets.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "list_capabilities",
+            "description": (
+                "Show ALL allowed commands for this agent, grouped by host and command set. "
+                "Includes parameter schemas, examples, approval mode, and risk level. "
+                "Use this to discover exactly what you can execute before calling exec_command."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "host_id": {"type": "string", "description": "Filter by specific host (optional)"},
+                    "command_set": {"type": "string", "description": "Filter by specific command set (optional)"},
+                },
+            },
+        },
+        {
+            "name": "server_health",
+            "description": "Get mcp-gate server health: version, host count, agent count.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Fuzzy matching for blocked command suggestions
+# ═══════════════════════════════════════════════════════════════════
+
+def _find_similar_commands(cmd: str, whitelist: list, top: int = 5) -> list[str]:
+    """Find similar allowed commands using difflib sequence matching."""
+    wl_cmds = [w["cmd"] for w in whitelist]
+    if not wl_cmds:
+        return []
+
+    # Try difflib first
+    matches = difflib.get_close_matches(cmd, wl_cmds, n=top, cutoff=0.4)
+    if matches:
+        return matches
+
+    # Fallback: match by first word (command name)
+    first_word = cmd.split()[0] if cmd.strip() else ""
+    if first_word:
+        return [c for c in wl_cmds if c.split()[0] == first_word][:top]
+
+    return []
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Tool execution
+# ═══════════════════════════════════════════════════════════════════
 
 _start_time = time.time()
 
@@ -146,6 +241,9 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
             lines.append(line)
         return "\n".join(lines) if lines else "No hosts available for this agent."
 
+    elif name == "list_capabilities":
+        return _handle_list_capabilities(args, agent_id, agent, allowed_hosts)
+
     elif name == "exec_command":
         host_id = args.get("host_id", "")
         command = args.get("command", "")
@@ -166,7 +264,7 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
         )
         action = result["action"]
         if action == "blocked":
-            return f"Blocked: {result['reason']}"
+            return _format_blocked_response(result, h, command, agent)
         elif action == "dry_run":
             return f"Dry run: would execute '{result['would_execute']}' (mode: {result['mode']})"
         elif action == "pending":
@@ -181,65 +279,88 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
                 # Check queue for resolution
-                for qi in storage.load_queue():
-                    if qi.get("approval_id") == aid:
-                        if qi["status"] == "pending":
-                            break  # still pending, keep waiting
-                        # Resolved — check audit for execution result
-                        audit = storage.load_audit(limit=10)
-                        for ae in audit:
-                            if ae.get("approval_id") == aid and ae.get("status") in ("ok", "error"):
-                                if ae.get("status") == "ok":
-                                    out = ae.get("output", "")
-                                    err_out = ae.get("stderr", "")
-                                    ms = ae.get("duration_ms", "?")
-                                    text = f"[{ae.get('host_id',host_id)}] exit={ae.get('exit_code','?')} ({ms}ms)\n{out}"
-                                    if err_out:
-                                        text += f"\nSTDERR:\n{err_out}"
-                                    return text
-                                else:
-                                    return f"Error: {ae.get('error', 'command failed after approval')}"
-                        # Resolved but no audit entry yet — report status
-                        if qi["status"] in ("approve", "approved"):
-                            return f"Command approved (approval_id={aid}). Execution result pending."
-                        else:
-                            return f"Command rejected (approval_id={aid}, mode={mode})."
+                item = storage.get_queue_item(aid)
+                if not item:
+                    break
+                st = item.get("status", "pending")
+                if st == "approved":
+                    try:
+                        r = await asyncio.to_thread(executor.execute_with_secrets, h, item.get("resolved", command))
+                    except ValueError as ve:
+                        return f"Error during execution: {ve}"
+                    entry = {"host_id": host_id, "command": command,
+                             "resolved": item.get("resolved", command),
+                             "source": agent_id or "mcp-transport",
+                             "agent_id": agent_id, **r}
+                    storage.append_audit(entry)
+                    text = f"exit_code={r['exit_code']}"
+                    out = r.get("output", "").strip()
+                    err = r.get("stderr", "").strip()
+                    if out:
+                        text += f"\n{out}"
+                    if err:
+                        text += f"\nSTDERR:\n{err}"
+                    return text
+                elif st == "rejected":
+                    return f"Rejected by operator (approval_id={aid})"
+                elif st == "expired":
+                    if mode == "optimistic":
+                        try:
+                            r = await asyncio.to_thread(executor.execute_with_secrets, h, item.get("resolved", command))
+                        except ValueError as ve:
+                            return f"Error during execution: {ve}"
+                        entry = {"host_id": host_id, "command": command,
+                                 "resolved": item.get("resolved", command),
+                                 "source": agent_id or "mcp-transport",
+                                 "agent_id": agent_id, "auto_approved": True, **r}
+                        storage.append_audit(entry)
+                        text = f"exit_code={r['exit_code']} (auto-approved, optimistic mode)"
+                        out = r.get("output", "").strip()
+                        err = r.get("stderr", "").strip()
+                        if out:
+                            text += f"\n{out}"
+                        if err:
+                            text += f"\nSTDERR:\n{err}"
+                        return text
+                    else:
+                        return f"Expired without approval (mode={mode}, approval_id={aid})"
+            # Timeout
+            item = storage.get_queue_item(aid)
+            if item and item.get("status") == "pending":
+                if mode == "optimistic":
+                    try:
+                        r = await asyncio.to_thread(executor.execute_with_secrets, h, item.get("resolved", command))
+                    except ValueError as ve:
+                        return f"Error during execution: {ve}"
+                    storage.update_queue_status(aid, "approved")
+                    entry = {"host_id": host_id, "command": command,
+                             "resolved": item.get("resolved", command),
+                             "source": agent_id or "mcp-transport",
+                             "agent_id": agent_id, "auto_approved": True, **r}
+                    storage.append_audit(entry)
+                    text = f"exit_code={r['exit_code']} (auto-approved, optimistic timeout)"
+                    out = r.get("output", "").strip()
+                    err = r.get("stderr", "").strip()
+                    if out:
+                        text += f"\n{out}"
+                    if err:
+                        text += f"\nSTDERR:\n{err}"
+                    return text
                 else:
-                    # Item not found in queue (already cleaned up) — check audit
-                    audit = storage.load_audit(limit=10)
-                    for ae in audit:
-                        if ae.get("approval_id") == aid:
-                            if ae.get("status") == "ok":
-                                out = ae.get("output", "")
-                                err_out = ae.get("stderr", "")
-                                ms = ae.get("duration_ms", "?")
-                                text = f"[{ae.get('host_id',host_id)}] exit={ae.get('exit_code','?')} ({ms}ms)\n{out}"
-                                if err_out:
-                                    text += f"\nSTDERR:\n{err_out}"
-                                return text
-                            elif ae.get("status") == "error":
-                                return f"Error: {ae.get('error', 'unknown')}"
-                            elif ae.get("status") == "rejected":
-                                return f"Command rejected (approval_id={aid})."
-                            elif ae.get("source") in ("manual_approve", "auto_approve"):
-                                out = ae.get("output", "")
-                                ms = ae.get("duration_ms", "?")
-                                return f"[{ae.get('host_id',host_id)}] exit={ae.get('exit_code','?')} ({ms}ms)\n{out}"
-                    break  # not in queue and not in audit — give up
-            # Timeout — return pending status
-            return f"Command queued for approval (still pending after {elapsed}s).\nApproval ID: {aid}\nMode: {mode}"
+                    return f"Pending approval (mode={mode}, approval_id={aid}). Approve via WebUI."
+            return f"Approval status unknown (approval_id={aid})"
         elif action == "executed":
             r = result["result"]
-            if r.get("status") == "ok":
-                out = r.get("output", "")
-                err = r.get("stderr", "")
-                ms = r.get("duration_ms", "?")
-                text = f"[{host_id}] exit={r.get('exit_code', '?')} ({ms}ms)\n{out}"
-                if err:
-                    text += f"\nSTDERR:\n{err}"
-                return text
-            else:
-                return f"Error: {r.get('error', 'unknown')}"
+            text = f"exit_code={r['exit_code']}"
+            out = r.get("output", "").strip()
+            err = r.get("stderr", "").strip()
+            if out:
+                text += f"\n{out}"
+            if err:
+                text += f"\nSTDERR:\n{err}"
+            return text
+        else:
+            return f"Error: {r.get('error', 'unknown')}"
 
     elif name == "server_health":
         hosts = storage.load_hosts()
@@ -256,6 +377,137 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
 
     return f"Unknown tool: {name}"
 
+
+# ═══════════════════════════════════════════════════════════════════
+#  list_capabilities handler
+# ═══════════════════════════════════════════════════════════════════
+
+def _handle_list_capabilities(args: dict, agent_id: str, agent: Optional[dict], allowed_hosts: list) -> str:
+    """Return detailed capabilities for the current agent."""
+    filter_host = args.get("host_id", "")
+    filter_cs = args.get("command_set", "")
+    agent_cs = set(agent.get("command_sets", [])) if agent else set()
+
+    sections = []
+    for h in storage.load_hosts():
+        if not h.get("enabled", True):
+            continue
+        if allowed_hosts and h["id"] not in allowed_hosts:
+            continue
+        if filter_host and h["id"] != filter_host:
+            continue
+
+        host_cs_ids = h.get("command_sets", [])
+        if agent_cs:
+            effective_cs_ids = [sid for sid in host_cs_ids if sid in agent_cs]
+        else:
+            effective_cs_ids = host_cs_ids
+
+        mode = h.get("approval_mode", "pessimistic")
+        host_section = [f"═══ Host: {h['id']} ({h.get('name', '')}) | mode={mode} ═══"]
+
+        for sid in effective_cs_ids:
+            cs = storage.get_command_set(sid)
+            if not cs or not cs.get("enabled", True):
+                continue
+            cs_type = cs.get("type", "allow")
+            if filter_cs and cs["id"] != filter_cs:
+                continue
+
+            desc = cs.get("description", "")
+            header = f"\n  [{cs_type.upper()}] {sid}"
+            if desc:
+                header += f" — {desc}"
+            host_section.append(header)
+
+            for cmd_entry in cs.get("commands", []):
+                cmd = cmd_entry["cmd"]
+                cmd_desc = cmd_entry.get("description", "")
+                line = f"    • {cmd}"
+                if cmd_desc:
+                    line += f"  — {cmd_desc}"
+                # Show params if present
+                if cmd_entry.get("params"):
+                    param_parts = []
+                    for p in cmd_entry["params"]:
+                        pinfo = p["name"]
+                        if p.get("default"):
+                            pinfo += f"={p['default']}"
+                        if p.get("regex"):
+                            pinfo += f" /{p['regex']}/"
+                        param_parts.append(pinfo)
+                    line += f"\n      params: {', '.join(param_parts)}"
+                # Show approval override if present
+                if cmd_entry.get("approval"):
+                    line += f"\n      approval: {cmd_entry['approval']}"
+                host_section.append(line)
+
+        if len(host_section) > 1:
+            sections.append("\n".join(host_section))
+
+    if not sections:
+        return "No capabilities found for the given filters."
+    return "\n\n".join(sections)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Structured blocked response
+# ═══════════════════════════════════════════════════════════════════
+
+def _format_blocked_response(result: dict, host: dict, command: str, agent: Optional[dict]) -> str:
+    """Format a helpful blocked response with reason, suggestions, and hints."""
+    reason = result.get("reason", "unknown")
+    parts = [f"BLOCKED: {reason}"]
+    parts.append(f"Host: {host['id']}, Command: {command}")
+
+    # Find similar commands
+    wl = storage.get_effective_whitelist(host)
+
+    # If agent has command sets, intersect
+    if agent:
+        agent_allow_cmds = set()
+        for sid in agent.get("command_sets", []):
+            cs = storage.get_command_set(sid)
+            if cs and cs.get("enabled", True) and cs.get("type", "allow") == "allow":
+                for c in cs.get("commands", []):
+                    agent_allow_cmds.add(c["cmd"])
+        if agent_allow_cmds:
+            wl = [w for w in wl if w["cmd"] in agent_allow_cmds]
+
+    similar = _find_similar_commands(command, wl)
+    if similar:
+        parts.append("Similar allowed commands:")
+        for s in similar:
+            parts.append(f"  • {s}")
+
+    # Identify which command set the command _would_ belong to
+    first_word = command.split()[0] if command.strip() else ""
+    matching_sets = []
+    for cs in storage.load_command_sets():
+        if cs.get("type") == "deny" or not cs.get("enabled", True):
+            continue
+        for c in cs.get("commands", []):
+            if c["cmd"].split()[0] == first_word:
+                if cs["id"] not in matching_sets:
+                    matching_sets.append(cs["id"])
+                break
+    if matching_sets:
+        host_cs = set(host.get("command_sets", []))
+        agent_cs = set(agent.get("command_sets", [])) if agent else set()
+        for ms in matching_sets:
+            if ms not in host_cs:
+                parts.append(f"Hint: command set '{ms}' has '{first_word}' commands but is not assigned to host '{host['id']}'")
+            elif agent_cs and ms not in agent_cs:
+                parts.append(f"Hint: command set '{ms}' is on host but not assigned to agent '{agent.get('id', '?')}'")
+
+    parts.append("Use list_capabilities to see all allowed commands.")
+    return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  JSON-RPC handler
+# ═══════════════════════════════════════════════════════════════════
+
 async def _handle_rpc(req: dict, agent_id: str) -> dict:
     method = req.get("method", "")
     rid = req.get("id")
@@ -268,7 +520,8 @@ async def _handle_rpc(req: dict, agent_id: str) -> dict:
             "serverInfo": {"name": "mcp-gate", "version": full_version()},
         }}
     elif method == "tools/list":
-        return {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}}
+        tools = _build_tools(agent_id)
+        return {"jsonrpc": "2.0", "id": rid, "result": {"tools": tools}}
     elif method == "tools/call":
         tname = p.get("name", "")
         targs = p.get("arguments", {})
