@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/screenshots/logo.png" alt="MCP Gate" width="380">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/logo-light.png">
+    <img alt="MCP Gate" src="docs/screenshots/logo-dark.png" width="380">
+  </picture>
 </p>
 
 <h1 align="center">MCP Gate</h1>
@@ -13,6 +17,7 @@
   <img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/docker-compose%20V2-2496ED.svg" alt="Docker">
   <img src="https://img.shields.io/badge/MCP-protocol-818cf8.svg" alt="MCP">
+  <img src="https://img.shields.io/badge/i18n-EN%20|%20RU%20|%20ZH-green.svg" alt="i18n">
 </p>
 
 <p align="center">
@@ -60,7 +65,7 @@ LLM Agent ──MCP Protocol──▶ MCP Gate ──SSH──▶ Your Servers
 | **Authentication** | Three modes: `basic` (bcrypt + signed cookie), `proxy` (Authentik/Keycloak/Authelia), `none` (homelab behind VPN) |
 | **Agents** | Support for Claude, ChatGPT, Gemini, Cursor, Windsurf, Continue, Cline, Open WebUI, Custom · Per-agent command sets, rate limits, allowed hosts · Enable/disable toggle with instant MCP access revocation |
 | **Management** | Command Sets (Allow/Deny) · Host Setup Instructions (auto-generated bash scripts) · Import/Export (JSON paste or file upload) · SSH key lifecycle management · Dashboard with live metrics |
-| **UI** | Dark glassmorphism theme · 6 built-in color schemes · Custom backgrounds · i18n (English + Russian) · Responsive layout |
+| **UI** | Dark glassmorphism theme · 6 built-in color schemes · Custom backgrounds · i18n (English, Russian, Chinese) · Responsive layout |
 
 ---
 
@@ -68,30 +73,44 @@ LLM Agent ──MCP Protocol──▶ MCP Gate ──SSH──▶ Your Servers
 
 <table>
 <tr>
-<td align="center"><strong>Login</strong><br><img src="docs/screenshots/01_login.png" width="400"></td>
-<td align="center"><strong>Dashboard</strong><br><img src="docs/screenshots/02_dashboard.png" width="400"></td>
+<td align="center"><strong>Login</strong><br><img src="docs/screenshots/en/01_login.png" width="400"></td>
+<td align="center"><strong>Dashboard</strong><br><img src="docs/screenshots/en/02_dashboard.png" width="400"></td>
 </tr>
 <tr>
-<td align="center"><strong>Hosts</strong><br><img src="docs/screenshots/03_hosts.png" width="400"></td>
-<td align="center"><strong>Agents</strong><br><img src="docs/screenshots/04_agents.png" width="400"></td>
+<td align="center"><strong>Hosts</strong><br><img src="docs/screenshots/en/03_hosts.png" width="400"></td>
+<td align="center"><strong>Agents</strong><br><img src="docs/screenshots/en/04_agents.png" width="400"></td>
 </tr>
 <tr>
-<td align="center"><strong>Command Sets</strong><br><img src="docs/screenshots/05_command_sets.png" width="400"></td>
-<td align="center"><strong>Console</strong><br><img src="docs/screenshots/06_console.png" width="400"></td>
+<td align="center"><strong>Command Sets</strong><br><img src="docs/screenshots/en/05_command_sets.png" width="400"></td>
+<td align="center"><strong>Console</strong><br><img src="docs/screenshots/en/06_console.png" width="400"></td>
 </tr>
 <tr>
-<td align="center"><strong>Audit Log</strong><br><img src="docs/screenshots/07_audit.png" width="400"></td>
-<td align="center"><strong>Approvals</strong><br><img src="docs/screenshots/08_approvals.png" width="400"></td>
+<td align="center"><strong>Audit Log</strong><br><img src="docs/screenshots/en/07_audit.png" width="400"></td>
+<td align="center"><strong>Approvals</strong><br><img src="docs/screenshots/en/08_approvals.png" width="400"></td>
 </tr>
 <tr>
-<td align="center"><strong>Secrets Vault</strong><br><img src="docs/screenshots/09_secrets.png" width="400"></td>
-<td align="center"><strong>Notifications</strong><br><img src="docs/screenshots/10_alerts.png" width="400"></td>
+<td align="center"><strong>Secrets Vault</strong><br><img src="docs/screenshots/en/09_secrets.png" width="400"></td>
+<td align="center"><strong>Notifications</strong><br><img src="docs/screenshots/en/10_alerts.png" width="400"></td>
 </tr>
 <tr>
-<td align="center"><strong>Settings</strong><br><img src="docs/screenshots/11_settings.png" width="400"></td>
-<td align="center"><strong>Appearance</strong><br><img src="docs/screenshots/12_appearance.png" width="400"></td>
+<td align="center"><strong>Settings</strong><br><img src="docs/screenshots/en/11_settings.png" width="400"></td>
+<td align="center"><strong>Appearance</strong><br><img src="docs/screenshots/en/12_appearance.png" width="400"></td>
 </tr>
 </table>
+
+<details>
+<summary>🇷🇺 Скриншоты на русском</summary>
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/ru/01_login.png" width="400"></td>
+<td align="center"><img src="docs/screenshots/ru/02_dashboard.png" width="400"></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/ru/03_hosts.png" width="400"></td>
+<td align="center"><img src="docs/screenshots/ru/04_agents.png" width="400"></td>
+</tr>
+</table>
+</details>
 
 ---
 
