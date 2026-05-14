@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
 # https://github.com/sv102/mcp-gate
-"""
-executor.py — Unified command execution logic for MCP Gate.
-Single source of truth: auth check → params → approval → secrets → SSH → audit → broadcast.
+"""executor.py — Unified command execution logic for MCP Gate.
+Single source of truth: auth check → rate limit → params → approval → secrets → SSH → audit → broadcast.
 
-Called from:
-  - main.py api_exec()      (API key auth, rate limit done by caller)
-  - main.py admin_exec()    (skip_approval=True, check_whitelist_only=True)
-  - mcp_transport.py        (OAuth auth, host/agent filtering done by caller)
+Changes vs previous:
+  - Rate limiting enforced: host.rate_limit and agent.rate_limit are now checked here.
+    Previously the fields existed in models but were never evaluated.
 """
 
 import asyncio
+import functools
 import time
 import logging
 from typing import Optional, Callable
@@ -20,28 +19,22 @@ import storage
 import ssh_client
 import params
 import notifications
+import app_state
 
 log = logging.getLogger("mcp-gate.executor")
 
 
 def get_approval_mode(host: dict, wl_entry: dict) -> str:
-    """Get effective approval mode from whitelist entry or host default."""
     return wl_entry.get("approval", host.get("approval_mode", "pessimistic"))
 
 
 def get_exec_delay(host: dict, wl_entry: dict) -> float:
-    """Get effective execution delay from whitelist entry or host default."""
     return wl_entry.get("exec_delay", host.get("exec_delay", 0))
 
 
 def execute_with_secrets(host: dict, cmd: str) -> dict:
     """Execute command via SSH with secret substitution and output scrubbing.
-
     Synchronous — must be called via asyncio.to_thread() from async contexts.
-
-    Used by:
-      - execute_command() for immediate execution
-      - approval_loop / api_approve in tasks.py for deferred execution
     """
     resolved, scrub = storage.substitute_secrets(cmd, host["id"])
     result = ssh_client.execute(host, resolved)
@@ -67,21 +60,10 @@ async def execute_command(
     Unified command execution pipeline.
 
     Returns dict with "action" key:
-      blocked  — command denied (whitelist/deny/params/secrets)
+      blocked  — command denied (whitelist/deny/params/secrets/rate-limit)
       dry_run  — host in dry_run mode
       executed — command ran, "result" has SSH output
       pending  — queued for approval
-
-    Args:
-        host:                 Host dict from storage
-        command:              Raw command string
-        agent:                Agent dict (None = global key or admin)
-        agent_id:             Agent identifier for audit
-        source:               Source label for audit
-        args:                 Optional param args for parameterized commands
-        skip_approval:        True for admin console (skip approval, still check whitelist)
-        check_whitelist_only: True for admin (host whitelist only, no agent intersection/deny)
-        bcast_fn:             Async WebSocket broadcast function
     """
 
     async def _bcast(entry):
@@ -95,7 +77,6 @@ async def execute_command(
     wl = storage.find_whitelist_entry(host, command)
 
     if check_whitelist_only:
-        # Admin path: only check if command exists in effective whitelist
         if not wl:
             entry = {"host_id": host["id"], "command": command, "source": source,
                      "status": "blocked", "reason": "not in whitelist"}
@@ -103,7 +84,6 @@ async def execute_command(
             await _bcast(entry)
             return {"action": "blocked", "reason": "not in whitelist", "entry": entry}
     else:
-        # Full auth: INTERSECTION + DENY
         allowed, reason = storage.check_command_authorized(host, agent, command)
         if not allowed:
             entry = {"host_id": host["id"], "command": command, "source": source,
@@ -117,7 +97,31 @@ async def execute_command(
     if not wl:
         wl = {"cmd": command, "category": "read"}
 
-    # ── 2. Parameterized command resolution ──
+    # ── 2. Rate limiting ──
+    # Checked after auth so rate limit violations are still auditable.
+    if not check_whitelist_only:
+        host_limit = host.get("rate_limit", 0)
+        if not app_state.check_rate_limit(f"host:{host['id']}", host_limit):
+            entry = {"host_id": host["id"], "command": command, "source": source,
+                     "agent_id": agent_id, "status": "blocked",
+                     "reason": f"rate limit exceeded (host: {host_limit}/min)"}
+            storage.append_audit(entry)
+            await _bcast(entry)
+            return {"action": "blocked",
+                    "reason": f"rate limit exceeded (host: {host_limit}/min)", "entry": entry}
+
+        if agent:
+            agent_limit = agent.get("rate_limit", 0)
+            if not app_state.check_rate_limit(f"agent:{agent_id}", agent_limit):
+                entry = {"host_id": host["id"], "command": command, "source": source,
+                         "agent_id": agent_id, "status": "blocked",
+                         "reason": f"rate limit exceeded (agent: {agent_limit}/min)"}
+                storage.append_audit(entry)
+                await _bcast(entry)
+                return {"action": "blocked",
+                        "reason": f"rate limit exceeded (agent: {agent_limit}/min)", "entry": entry}
+
+    # ── 3. Parameterized command resolution ──
     resolved_cmd = command
     if params.entry_has_params(wl):
         try:
@@ -130,7 +134,7 @@ async def execute_command(
             await _bcast(entry)
             return {"action": "blocked", "reason": str(ve), "entry": entry}
 
-    # ── 3. Approval mode routing ──
+    # ── 4. Approval mode routing ──
     mode = get_approval_mode(host, wl)
     delay = get_exec_delay(host, wl)
 
@@ -148,7 +152,6 @@ async def execute_command(
         if delay > 0:
             await asyncio.sleep(delay)
         try:
-            # SSH is synchronous (Paramiko) — run in thread pool to avoid blocking event loop
             result = await asyncio.to_thread(execute_with_secrets, host, resolved_cmd)
         except ValueError as ve:
             entry = {"host_id": host["id"], "command": command, "source": source,
@@ -164,7 +167,7 @@ async def execute_command(
         await _bcast(entry)
         return {"action": "executed", "result": result, "entry": entry}
 
-    # ── 4. Queue for approval (pessimistic / optimistic / strict) ──
+    # ── 5. Queue for approval (pessimistic / optimistic / strict) ──
     timeout = host.get("approval_timeout", 300)
     item = {
         "host_id": host["id"], "command": command, "resolved": resolved_cmd,
@@ -172,7 +175,6 @@ async def execute_command(
         "timeout": timeout if mode != "strict" else 0,
     }
     aid = storage.add_to_queue(item)
-    # Broadcast pending approval to WebSocket for real-time UI updates
     pending_event = {
         "host_id": host["id"], "command": command, "source": source,
         "agent_id": agent_id, "status": "pending", "approval_id": aid,

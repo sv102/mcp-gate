@@ -31,6 +31,11 @@ MAX_AUDIT_ENTRIES = 10_000
 # Agent key cache: {encrypted_key: agent_id} — avoids O(n) Fernet per request
 _agent_key_cache: dict[str, str] = {}
 
+# Command set cache: {set_id: (command_set_dict, expires_ts)}
+# Reduces YAML reads on the hot path (check_command_authorized).
+_cs_cache: dict[str, tuple] = {}
+_CS_CACHE_TTL = 5.0  # seconds
+
 # ═══ Agent type registry ═══
 AGENT_TYPES = {
     "claude": {"name": "Claude (Anthropic)", "icon": "🟠", "color": "#d97706",
@@ -58,6 +63,7 @@ def ensure_dirs():
     for d in (DATA_DIR, SSH_KEYS_DIR, ASSETS_DIR):
         d.mkdir(parents=True, exist_ok=True)
     os.chmod(SSH_KEYS_DIR, 0o700)
+    _ensure_audit_schema()
 
 
 def _atomic_write(path: Path, content: str):
@@ -443,7 +449,13 @@ def save_command_sets(s: list[dict]):
 
 
 def get_command_set(sid: str) -> Optional[dict]:
-    return next((s for s in load_command_sets() if s.get("id") == sid), None)
+    now = time.time()
+    cached = _cs_cache.get(sid)
+    if cached and cached[1] > now:
+        return cached[0]
+    found = next((s for s in load_command_sets() if s.get("id") == sid), None)
+    _cs_cache[sid] = (found, now + _CS_CACHE_TTL)
+    return found
 
 
 def upsert_command_set(cs: dict):
@@ -452,9 +464,11 @@ def upsert_command_set(cs: dict):
         if s["id"] == cs["id"]:
             sets[i] = cs
             save_command_sets(sets)
+            _cs_cache.pop(cs["id"], None)
             return
     sets.append(cs)
     save_command_sets(sets)
+    _cs_cache.pop(cs["id"], None)
 
 
 def delete_command_set(sid: str) -> bool:
@@ -463,6 +477,7 @@ def delete_command_set(sid: str) -> bool:
     if len(n) == len(sets):
         return False
     save_command_sets(n)
+    _cs_cache.pop(sid, None)
     return True
 
 
@@ -638,99 +653,153 @@ def export_secrets_meta() -> list[dict]:
     ]
 
 
-# ═══ Audit ═══
+# ═══ Audit (SQLite) ═══
+import sqlite3
+from contextlib import contextmanager
+
+AUDIT_DB = DATA_DIR / "audit.db"
+
+
+@contextmanager
+def _audit_db():
+    conn = sqlite3.connect(str(AUDIT_DB), timeout=5, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _ensure_audit_schema():
+    with _audit_db() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS audit (
+            id TEXT PRIMARY KEY, ts REAL NOT NULL,
+            host_id TEXT DEFAULT '', status TEXT DEFAULT '',
+            source TEXT DEFAULT '', agent_id TEXT DEFAULT '',
+            command TEXT DEFAULT '', data TEXT NOT NULL)""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_audit_host ON audit(host_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_audit_status ON audit(status)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_audit_source ON audit(source)")
+        db.commit()
+    _migrate_jsonl_to_sqlite()
+
+
+def _migrate_jsonl_to_sqlite():
+    if not AUDIT_FILE.exists():
+        return
+    with _audit_db() as db:
+        if db.execute("SELECT COUNT(*) FROM audit").fetchone()[0] > 0:
+            AUDIT_FILE.rename(AUDIT_FILE.with_suffix(".jsonl.bak"))
+            return
+    text = AUDIT_FILE.read_text(encoding="utf-8").strip()
+    if not text:
+        AUDIT_FILE.rename(AUDIT_FILE.with_suffix(".jsonl.bak"))
+        return
+    with _audit_db() as db:
+        for line in text.split("\n"):
+            if not line.strip():
+                continue
+            try:
+                e = json.loads(line)
+                db.execute(
+                    "INSERT OR IGNORE INTO audit (id,ts,host_id,status,source,agent_id,command,data) VALUES (?,?,?,?,?,?,?,?)",
+                    (e.get("id", str(uuid.uuid4())[:8]), e.get("ts", time.time()),
+                     e.get("host_id",""), e.get("status",""), e.get("source",""),
+                     e.get("agent_id",""), e.get("command",""),
+                     json.dumps(e, ensure_ascii=False))
+                )
+            except Exception:
+                pass
+        db.commit()
+    AUDIT_FILE.rename(AUDIT_FILE.with_suffix(".jsonl.bak"))
+
 
 def append_audit(e: dict):
     e.setdefault("id", str(uuid.uuid4())[:8])
     e.setdefault("ts", time.time())
-    with open(AUDIT_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    with _audit_db() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO audit (id,ts,host_id,status,source,agent_id,command,data) VALUES (?,?,?,?,?,?,?,?)",
+            (e["id"], e["ts"], e.get("host_id",""), e.get("status",""),
+             e.get("source",""), e.get("agent_id",""), e.get("command",""),
+             json.dumps(e, ensure_ascii=False))
+        )
+        db.commit()
 
 
 def load_audit(limit=100, host_id="", status="", source="", group="",
                ts_from=0.0, ts_to=0.0) -> list[dict]:
-    if not AUDIT_FILE.exists():
-        return []
-    hg = {h["id"]: h.get("group", "") for h in load_hosts()} if group else {}
-    entries = []
-    for line in reversed(AUDIT_FILE.read_text().strip().split("\n")):
-        if not line.strip():
-            continue
-        try:
-            e = json.loads(line)
-        except:
-            continue
-        if host_id and e.get("host_id") != host_id:
-            continue
-        if status and e.get("status") != status:
-            continue
-        if source and e.get("source") != source:
-            continue
-        if group and hg.get(e.get("host_id", "")) != group:
-            continue
-        if ts_from and e.get("ts", 0) < ts_from:
-            continue
-        if ts_to and e.get("ts", 0) > ts_to:
-            continue
-        entries.append(e)
-        if len(entries) >= limit:
-            break
-    return entries
+    conditions, sql_params = [], []
+    if group:
+        hg_ids = [h["id"] for h in load_hosts() if h.get("group","") == group]
+        if not hg_ids:
+            return []
+        conditions.append(f"host_id IN ({','.join('?'*len(hg_ids))})")
+        sql_params.extend(hg_ids)
+    elif host_id:
+        conditions.append("host_id = ?")
+        sql_params.append(host_id)
+    if status:
+        conditions.append("status = ?"); sql_params.append(status)
+    if source:
+        conditions.append("source = ?"); sql_params.append(source)
+    if ts_from:
+        conditions.append("ts >= ?"); sql_params.append(ts_from)
+    if ts_to:
+        conditions.append("ts <= ?"); sql_params.append(ts_to)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql_params.append(limit)
+    with _audit_db() as db:
+        rows = db.execute(f"SELECT data FROM audit {where} ORDER BY ts DESC LIMIT ?", sql_params).fetchall()
+    return [json.loads(r[0]) for r in rows if r[0]]
 
 
 def load_audit_all() -> list[dict]:
-    if not AUDIT_FILE.exists():
-        return []
-    r = []
-    for l in reversed(AUDIT_FILE.read_text().strip().split("\n")):
-        if l.strip():
-            try:
-                r.append(json.loads(l))
-            except:
-                pass
-    return r
+    with _audit_db() as db:
+        rows = db.execute("SELECT data FROM audit ORDER BY ts DESC").fetchall()
+    return [json.loads(r[0]) for r in rows if r[0]]
 
 
 def clear_audit() -> int:
-    if not AUDIT_FILE.exists():
-        return 0
-    c = sum(1 for l in AUDIT_FILE.read_text().strip().split("\n") if l.strip())
-    _atomic_write(AUDIT_FILE, "")
-    return c
+    with _audit_db() as db:
+        count = db.execute("SELECT COUNT(*) FROM audit").fetchone()[0]
+        db.execute("DELETE FROM audit")
+        db.commit()
+    return count
 
 
 def apply_retention(days: int) -> int:
-    if not AUDIT_FILE.exists() or days <= 0:
+    if days <= 0:
         return 0
     cut = time.time() - days * 86400
-    kept, rm = [], 0
-    for l in AUDIT_FILE.read_text().strip().split("\n"):
-        if not l.strip():
-            continue
-        try:
-            if json.loads(l).get("ts", 0) >= cut:
-                kept.append(l)
-            else:
-                rm += 1
-        except:
-            kept.append(l)
-    if rm:
-        _atomic_write(AUDIT_FILE, "\n".join(kept) + "\n" if kept else "")
-    return rm
+    with _audit_db() as db:
+        count = db.execute("SELECT COUNT(*) FROM audit WHERE ts < ?", (cut,)).fetchone()[0]
+        if count:
+            db.execute("DELETE FROM audit WHERE ts < ?", (cut,))
+            db.commit()
+    return count
 
 
 def trim_audit() -> int:
-    if not AUDIT_FILE.exists():
-        return 0
-    lines = AUDIT_FILE.read_text().strip().split("\n")
-    if len(lines) <= MAX_AUDIT_ENTRIES:
-        return 0
-    trimmed, kept = lines[:-MAX_AUDIT_ENTRIES], lines[-MAX_AUDIT_ENTRIES:]
-    with open(AUDIT_ARCHIVE, "a") as f:
-        for l in trimmed:
-            f.write(l + "\n")
-    _atomic_write(AUDIT_FILE, "\n".join(kept) + "\n")
-    return len(trimmed)
+    with _audit_db() as db:
+        total = db.execute("SELECT COUNT(*) FROM audit").fetchone()[0]
+        if total <= MAX_AUDIT_ENTRIES:
+            return 0
+        row = db.execute("SELECT ts FROM audit ORDER BY ts DESC LIMIT 1 OFFSET ?", (MAX_AUDIT_ENTRIES,)).fetchone()
+        if not row:
+            return 0
+        cutoff_ts = row[0]
+        trimmed = db.execute("SELECT data FROM audit WHERE ts <= ?", (cutoff_ts,)).fetchall()
+        if trimmed:
+            with open(AUDIT_ARCHIVE, "a", encoding="utf-8") as f:
+                for r in trimmed:
+                    f.write(r[0] + "\n")
+            db.execute("DELETE FROM audit WHERE ts <= ?", (cutoff_ts,))
+            db.commit()
+        return len(trimmed)
 
 
 # ═══ Approval Queue ═══
@@ -770,6 +839,23 @@ def get_pending_approvals() -> list[dict]:
     return [i for i in load_queue() if i["status"] == "pending"]
 
 
+def get_queue_item(aid: str) -> Optional[dict]:
+    """Get approval queue item by approval_id. Returns None if not found."""
+    return next((i for i in load_queue() if i.get("approval_id") == aid), None)
+
+
+def update_queue_status(aid: str, status: str) -> bool:
+    """Update status of an approval queue item. Returns True if found."""
+    q = load_queue()
+    for i in q:
+        if i.get("approval_id") == aid:
+            i["status"] = status
+            i["resolved_at"] = time.time()
+            save_queue(q)
+            return True
+    return False
+
+
 def cleanup_expired(default_timeout=300) -> list[dict]:
     q, now, expired = load_queue(), time.time(), []
     for i in q:
@@ -779,7 +865,7 @@ def cleanup_expired(default_timeout=300) -> list[dict]:
             continue
         if now - i["created_at"] > i.get("timeout", default_timeout):
             auto = "timeout_approve" if i.get("approval_mode") == "optimistic" else "timeout_reject"
-            i.update(status="approve" if "approve" in auto else "reject",
+            i.update(status="approved" if auto == "timeout_approve" else "rejected",
                      resolved_at=now, auto_resolved=auto)
             expired.append(i)
     if expired:
@@ -790,7 +876,7 @@ def cleanup_expired(default_timeout=300) -> list[dict]:
 # ═══ Backup ═══
 
 def export_backup() -> dict:
-    from main import VERSION
+    from constants import VERSION
     cfg = load_config()
     safe = {k: v for k, v in cfg.items() if k != "mcp_api_key_hash"}
     if safe.get("telegram", {}).get("bot_token"):

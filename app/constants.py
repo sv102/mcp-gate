@@ -3,7 +3,7 @@
 # https://github.com/sv102/mcp-gate
 """constants.py — Shared constants for MCP Gate."""
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 DEV_BUILD = 0   # internal iteration counter; 0 = clean published release
 
 def full_version():

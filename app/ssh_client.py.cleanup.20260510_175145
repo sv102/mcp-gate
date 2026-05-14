@@ -16,20 +16,10 @@ from pathlib import Path
 from typing import Optional
 
 import paramiko
-import threading
 
 from storage import SSH_KEYS_DIR
 
 log = logging.getLogger("mcp-gate.ssh")
-
-# ═══ Connection Pool ═══
-# Keys: '{host_id}:{hostname}:{port}:{user}'
-# Values: (paramiko.SSHClient, created_ts)
-# Per-host Lock serialises access — paramiko is not concurrent-safe per client.
-_pool: dict[str, tuple] = {}
-_pool_locks: dict[str, "threading.Lock"] = {}
-_pool_meta: dict[str, float] = {}  # key → created_at
-POOL_TTL = 300  # seconds; idle connection dropped after 5 minutes
 SSH_TIMEOUT = 30
 MAX_OUTPUT_BYTES = 65536
 KNOWN_HOSTS_FILE = SSH_KEYS_DIR / "known_hosts"
@@ -409,6 +399,78 @@ def write_sandbox_file(host: dict, filename: str, content: str,
 
 
 
+# ═══ Sandbox File Operations ═══
+
+MAX_SANDBOX_FILE_SIZE = 102400  # 100KB
+
+
+def _validate_sandbox_filename(filename: str) -> bool:
+    """Validate sandbox filename — no path traversal, safe chars only."""
+    import re
+    if not filename or len(filename) > 100:
+        return False
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return False
+    return bool(re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', filename))
+
+
+def write_sandbox_file(host: dict, filename: str, content: str,
+                       sandbox_dir: str = "/tmp/mcp-sandbox") -> dict:
+    """Write file to host sandbox via SFTP.
+
+    Security:
+      - filename validated (no path traversal, safe chars only)
+      - content limited to MAX_SANDBOX_FILE_SIZE (100KB)
+      - path restricted to sandbox_dir
+
+    Returns dict: {"ok": True, "path": ..., "bytes": ..., "duration_ms": ...}
+    """
+    if not _validate_sandbox_filename(filename):
+        return {"ok": False, "error": f"Invalid filename: {filename}. "
+                "Allowed: alphanumeric, dot, dash, underscore. Max 100 chars. "
+                "Must start with alphanumeric."}
+
+    content_bytes = content.encode('utf-8')
+    if len(content_bytes) > MAX_SANDBOX_FILE_SIZE:
+        return {"ok": False, "error": f"Content too large: {len(content_bytes)} bytes "
+                f"(max {MAX_SANDBOX_FILE_SIZE})"}
+
+    path = f"{sandbox_dir.rstrip('/')}/{filename}"
+    t0 = time.time()
+
+    try:
+        client = _connect(host)
+        sftp = client.open_sftp()
+
+        # Ensure sandbox dir exists
+        try:
+            sftp.stat(sandbox_dir)
+        except FileNotFoundError:
+            # Create parent dirs if needed (one level only)
+            sftp.mkdir(sandbox_dir)
+
+        with sftp.open(path, 'w') as f:
+            f.write(content)
+
+        # Make executable if script
+        if filename.endswith(('.sh', '.py')):
+            sftp.chmod(path, 0o755)
+        else:
+            sftp.chmod(path, 0o644)
+
+        sftp.close()
+        client.close()
+        duration_ms = int((time.time() - t0) * 1000)
+
+        log.info(f"Sandbox write: {host['id']}:{path} ({len(content_bytes)} bytes)")
+        return {"ok": True, "path": path, "bytes": len(content_bytes),
+                "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = int((time.time() - t0) * 1000)
+        log.warning(f"Sandbox write failed: {host['id']}:{path}: {e}")
+        return {"ok": False, "error": str(e), "duration_ms": duration_ms}
+
 # ═══ Connection & Execution ═══
 
 def test_connection(host: dict) -> dict:
@@ -432,7 +494,7 @@ def test_connection(host: dict) -> dict:
 def execute(host: dict, command: str) -> dict:
     t0 = time.time()
     try:
-        client = _get_or_connect(host)
+        client = _connect(host)
         _, stdout, stderr = client.exec_command(command, timeout=SSH_TIMEOUT)
 
         exit_code = stdout.channel.recv_exit_status()
@@ -448,7 +510,7 @@ def execute(host: dict, command: str) -> dict:
         except Exception:
             pass
 
-        # Note: client returned to pool — not closed here
+        client.close()
         duration_ms = int((time.time() - t0) * 1000)
 
         return {
@@ -488,56 +550,6 @@ class _ManagedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
             host_keys.save(str(KNOWN_HOSTS_FILE))
         except Exception as e:
             log.warning(f"Failed to save known_hosts: {e}")
-
-
-def _pool_key(host: dict) -> str:
-    return f"{host.get('id','')}:{host.get('hostname','')}:{host.get('port',22)}:{host.get('user','mcp-reader')}"
-
-
-def _get_pool_lock(key: str) -> "threading.Lock":
-    if key not in _pool_locks:
-        _pool_locks[key] = threading.Lock()
-    return _pool_locks[key]
-
-
-def _get_or_connect(host: dict) -> paramiko.SSHClient:
-    """Return a live pooled SSH connection or create a new one.
-    Per-host lock ensures serialised (not concurrent) SSH channel usage.
-    """
-    key = _pool_key(host)
-    lock = _get_pool_lock(key)
-    with lock:
-        entry = _pool.get(key)
-        if entry:
-            client, created = entry
-            transport = client.get_transport()
-            alive = transport is not None and transport.is_active()
-            fresh = (time.time() - created) < POOL_TTL
-            if alive and fresh:
-                return client
-            # Dead or TTL expired — close and reconnect
-            try:
-                client.close()
-            except Exception:
-                pass
-            del _pool[key]
-        client = _connect(host)
-        _pool[key] = (client, time.time())
-        return client
-
-
-def invalidate_pool(host_id: str = ""):
-    """Close and remove pool entries. Pass host_id to remove specific host, '' for all."""
-    keys = [k for k in list(_pool.keys()) if not host_id or k.startswith(host_id + ":")]
-    for key in keys:
-        lock = _get_pool_lock(key)
-        with lock:
-            entry = _pool.pop(key, None)
-            if entry:
-                try:
-                    entry[0].close()
-                except Exception:
-                    pass
 
 
 def _connect(host: dict) -> paramiko.SSHClient:

@@ -1,7 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2025-2026 Sergej Napalkov (@sv_102)
 # https://github.com/sv102/mcp-gate
-"""tasks.py — Background tasks for MCP Gate: approval loop, audit trim, host ping."""
+"""tasks.py — Background tasks for MCP Gate: approval loop, audit trim, host ping.
+
+Changes vs previous:
+  - approval_loop: calls app_state.signal_approval(aid) after resolving expired items
+    so mcp_transport handlers waiting on asyncio.Event are woken immediately.
+  - cleanup_expired now sets status "approved"/"rejected" (was "approve"/"reject") —
+    consistency fix for mcp_transport status checks.
+"""
 import asyncio
 import logging
 import time
@@ -15,41 +22,53 @@ log = logging.getLogger("mcp-gate.tasks")
 
 
 async def approval_loop():
-    """Process expired approval queue items."""
+    """Process expired approval queue items and signal waiting MCP handlers."""
     await asyncio.sleep(5)
     while True:
         try:
             for it in storage.cleanup_expired():
-                if it.get("auto_resolved") == "timeout_approve":
+                aid = it["approval_id"]
+                auto = it.get("auto_resolved", "")
+
+                if auto == "timeout_approve":
                     h = storage.get_host(it["host_id"])
                     if h:
-                        # Re-check authorization (whitelist may have changed)
+                        # Re-check authorization (whitelist may have changed since queuing)
                         _agent = storage.get_agent(it.get("agent_id")) if it.get("agent_id") else None
                         _ok, _reason = storage.check_command_authorized(h, _agent, it["command"])
                         if not _ok:
                             e = {"host_id": it["host_id"], "command": it["command"],
-                                 "source": "auto_approve_denied", "approval_id": it["approval_id"],
+                                 "source": "auto_approve_denied", "approval_id": aid,
                                  "status": "blocked", "reason": f"recheck: {_reason}"}
+                            storage.update_queue_status(aid, "rejected")
                             storage.append_audit(e)
                             await app_state.ws_broadcast(e)
+                            app_state.signal_approval(aid)
                             continue
+
                         d = h.get("exec_delay", 0)
                         if d > 0:
                             await asyncio.sleep(d)
-                        # SSH is synchronous (Paramiko) — run in thread pool to avoid blocking event loop
                         r = await asyncio.to_thread(
                             executor.execute_with_secrets, h, it.get("resolved", it["command"])
                         )
                         e = {"host_id": it["host_id"], "command": it["command"],
-                             "source": "auto_approve", "approval_id": it["approval_id"], **r}
+                             "source": "auto_approve", "approval_id": aid, **r}
+                        storage.update_queue_status(aid, "approved")
                         storage.append_audit(e)
                         await app_state.ws_broadcast(e)
-                elif it.get("auto_resolved") == "timeout_reject":
+
+                elif auto == "timeout_reject":
                     e = {"host_id": it["host_id"], "command": it["command"],
-                         "source": "auto_reject", "approval_id": it["approval_id"],
+                         "source": "auto_reject", "approval_id": aid,
                          "status": "rejected", "reason": "Timeout"}
+                    storage.update_queue_status(aid, "rejected")
                     storage.append_audit(e)
                     await app_state.ws_broadcast(e)
+
+                # Wake up any mcp_transport handler waiting on this approval
+                app_state.signal_approval(aid)
+
         except Exception as x:
             log.error(f"approval: {x}")
         await asyncio.sleep(5)
@@ -82,17 +101,19 @@ async def ping_loop():
             for h in storage.load_hosts():
                 hid = h["id"]
                 if not h.get("enabled", True):
-                    app_state.host_status[hid] = {"ok": False, "msg": "disabled", "ms": 0, "ts": time.time()}
+                    app_state.host_status[hid] = {"ok": False, "msg": "disabled",
+                                                   "ms": 0, "ts": time.time()}
                     continue
                 try:
                     t0 = time.time()
-                    # SSH test is synchronous — run in thread pool
                     r = await asyncio.to_thread(ssh_client.test_connection, h)
                     ms = int((time.time() - t0) * 1000)
-                    app_state.host_status[hid] = {"ok": r.get("ok", False), "msg": r.get("message", ""),
-                                                  "ms": ms, "ts": time.time()}
+                    app_state.host_status[hid] = {"ok": r.get("ok", False),
+                                                   "msg": r.get("message", ""),
+                                                   "ms": ms, "ts": time.time()}
                 except Exception as x:
-                    app_state.host_status[hid] = {"ok": False, "msg": str(x), "ms": 0, "ts": time.time()}
+                    app_state.host_status[hid] = {"ok": False, "msg": str(x),
+                                                   "ms": 0, "ts": time.time()}
             await asyncio.sleep(max(10, intv))
         except Exception as x:
             log.error(f"ping: {x}")

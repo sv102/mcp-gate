@@ -4,6 +4,11 @@
 """
 params.py — Parameterized command matching for MCP Gate.
 Validates and substitutes {named} parameters in whitelist templates.
+
+Changes vs previous:
+  - validate_and_substitute: leftover placeholder check after substitution.
+    If any {name} patterns remain after all substitutions, raises ValueError.
+    Prevents silent no-ops when param spec has gaps vs template.
 """
 
 import re
@@ -75,6 +80,15 @@ def validate_and_substitute(wl_entry: dict, args: Optional[dict]) -> str:
             raise ValueError(f"Param '{pname}': bad regex: {e}")
 
         result = result.replace("{" + pname + "}", value)
+
+    # Leftover placeholder guard: detect any {name} patterns remaining after substitution.
+    # This catches template/spec inconsistencies that would silently pass unresolved.
+    leftover = PARAM_PLACEHOLDER.findall(result)
+    if leftover:
+        raise ValueError(
+            f"Unresolved placeholders after substitution: {{{', '.join(leftover)}}}. "
+            "Check that params spec covers all template placeholders."
+        )
 
     return result
 

@@ -3,7 +3,7 @@
 # https://github.com/sv102/mcp-gate
 """mcp_transport.py — MCP Protocol Transport for mcp-gate.
 SSE + JSON-RPC 2.0 + OAuth 2.0. OAuth token bound to agent_id.
-Tools: exec_command, list_hosts, list_capabilities, server_health
+Tools: exec_command, list_hosts, list_capabilities, write_sandbox_file, server_health
 """
 import asyncio, json, os, secrets, time, logging, difflib
 from typing import AsyncGenerator, Optional
@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, HTTPException, Form
 from fastapi.responses import StreamingResponse, HTMLResponse, RedirectResponse, JSONResponse
 import storage, ssh_client, params
 import executor
+import app_state
 
 _bcast_fn = None
 def set_bcast(fn):
@@ -170,6 +171,25 @@ def _build_tools(agent_id: str) -> list:
             "description": "Get mcp-gate server health: version, host count, agent count.",
             "inputSchema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "write_sandbox_file",
+            "description": (
+                "Write a file to the sandbox directory on a managed host via SFTP. "
+                "Use this to deploy scripts before executing them with exec_command. "
+                "Sandbox path is per-host config (default: /tmp/mcp-sandbox). "
+                "Filenames: alphanumeric + ._- only, max 100 chars. "
+                "Content limit: 100KB. Scripts (.sh, .py) are auto-chmod +x."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "host_id": {"type": "string", "description": "Target host identifier"},
+                    "filename": {"type": "string", "description": "Filename (e.g. script.py, config.json). No paths — just the name."},
+                    "content": {"type": "string", "description": "File content to write"},
+                },
+                "required": ["host_id", "filename", "content"],
+            },
+        },
     ]
 
 
@@ -201,6 +221,36 @@ def _find_similar_commands(cmd: str, whitelist: list, top: int = 5) -> list[str]
 # ═══════════════════════════════════════════════════════════════════
 
 _start_time = time.time()
+
+
+# ═══ Token management API (used by routes_admin for revocation UI) ═══
+
+def list_tokens_safe() -> list[dict]:
+    """Return token list with sensitive values masked. Safe for API responses."""
+    now = time.time()
+    result = []
+    for tok, entry in access_tokens.items():
+        result.append({
+            "token_prefix": tok[:8] + "...",
+            "token_hash": __import__("hashlib").sha256(tok.encode()).hexdigest()[:16],
+            "agent_id": entry.get("agent_id", ""),
+            "expires": entry.get("expires", 0),
+            "expires_in_days": max(0, int((entry.get("expires", 0) - now) / 86400)),
+            "active": entry.get("expires", 0) > now,
+        })
+    return sorted(result, key=lambda x: x["expires"], reverse=True)
+
+
+def revoke_token_by_hash(token_hash: str) -> bool:
+    """Revoke token by its SHA-256 prefix (first 16 hex chars). Returns True if found."""
+    import hashlib
+    for tok in list(access_tokens.keys()):
+        if hashlib.sha256(tok.encode()).hexdigest()[:16] == token_hash:
+            del access_tokens[tok]
+            _save_tokens(access_tokens)
+            log.info(f"Token revoked: hash={token_hash}")
+            return True
+    return False
 
 async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
     agent = storage.get_agent(agent_id) if agent_id else None
@@ -270,85 +320,65 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
         elif action == "pending":
             aid = result["approval_id"]
             mode = result["approval_mode"]
-            # For MCP transport: poll until resolved (max 120s)
-            # Optimistic auto-approves on timeout; pessimistic auto-rejects
-            poll_max = min(120, int(result.get("expires_at", time.time() + 120) - time.time())) if result.get("expires_at") else 120
-            poll_interval = 2
-            elapsed = 0
-            while elapsed < poll_max:
-                await asyncio.sleep(poll_interval)
-                elapsed += poll_interval
-                # Check queue for resolution
-                item = storage.get_queue_item(aid)
-                if not item:
-                    break
-                st = item.get("status", "pending")
-                if st == "approved":
-                    try:
-                        r = await asyncio.to_thread(executor.execute_with_secrets, h, item.get("resolved", command))
-                    except ValueError as ve:
-                        return f"Error during execution: {ve}"
-                    entry = {"host_id": host_id, "command": command,
-                             "resolved": item.get("resolved", command),
-                             "source": agent_id or "mcp-transport",
-                             "agent_id": agent_id, **r}
-                    storage.append_audit(entry)
-                    text = f"exit_code={r['exit_code']}"
-                    out = r.get("output", "").strip()
-                    err = r.get("stderr", "").strip()
-                    if out:
-                        text += f"\n{out}"
-                    if err:
-                        text += f"\nSTDERR:\n{err}"
-                    return text
-                elif st == "rejected":
-                    return f"Rejected by operator (approval_id={aid})"
-                elif st == "expired":
-                    if mode == "optimistic":
-                        try:
-                            r = await asyncio.to_thread(executor.execute_with_secrets, h, item.get("resolved", command))
-                        except ValueError as ve:
-                            return f"Error during execution: {ve}"
-                        entry = {"host_id": host_id, "command": command,
-                                 "resolved": item.get("resolved", command),
-                                 "source": agent_id or "mcp-transport",
-                                 "agent_id": agent_id, "auto_approved": True, **r}
-                        storage.append_audit(entry)
-                        text = f"exit_code={r['exit_code']} (auto-approved, optimistic mode)"
-                        out = r.get("output", "").strip()
-                        err = r.get("stderr", "").strip()
-                        if out:
-                            text += f"\n{out}"
-                        if err:
-                            text += f"\nSTDERR:\n{err}"
-                        return text
-                    else:
-                        return f"Expired without approval (mode={mode}, approval_id={aid})"
-            # Timeout
+            poll_max = (min(120, int(result["expires_at"] - time.time()))
+                        if result.get("expires_at") else 120)
+
+            # Event-based wait: woken immediately by tasks.approval_loop or routes_admin.
+            # Replaces 2s polling loop that held the MCP connection for up to 120s.
+            ev = app_state.create_approval_event(aid)
+
+            # Guard: check if already resolved before blocking (tasks may have run)
             item = storage.get_queue_item(aid)
             if item and item.get("status") == "pending":
+                try:
+                    await asyncio.wait_for(ev.wait(), timeout=float(poll_max))
+                except asyncio.TimeoutError:
+                    pass
+            # Cleanup event regardless of outcome
+            app_state.approval_events.pop(aid, None)
+
+            async def _exec_approved(resolved_cmd: str, suffix: str = "") -> str:
+                try:
+                    r = await asyncio.to_thread(executor.execute_with_secrets, h, resolved_cmd)
+                except ValueError as ve:
+                    return f"Error during execution: {ve}"
+                entry = {"host_id": host_id, "command": command,
+                         "resolved": resolved_cmd,
+                         "source": agent_id or "mcp-transport",
+                         "agent_id": agent_id, **r}
+                storage.append_audit(entry)
+                text = f"exit_code={r['exit_code']}" + suffix
+                out = r.get("output", "").strip()
+                err = r.get("stderr", "").strip()
+                if out: text += f"\n{out}"
+                if err: text += f"\nSTDERR:\n{err}"
+                return text
+
+            item = storage.get_queue_item(aid)
+            if not item:
+                return f"Approval status unknown (approval_id={aid})"
+
+            st = item.get("status", "pending")
+            resolved_cmd = item.get("resolved", command)
+
+            if st == "approved":
+                return await _exec_approved(resolved_cmd)
+            elif st == "rejected":
+                return f"Rejected by operator (approval_id={aid})"
+            elif st == "timeout_approve":
+                storage.update_queue_status(aid, "approved")
+                return await _exec_approved(resolved_cmd, " (auto-approved, optimistic)")
+            elif st == "timeout_reject":
+                return f"Expired without approval (mode={mode}, approval_id={aid})"
+            elif st == "pending":
+                # Still pending after wait (strict mode or very long timeout)
                 if mode == "optimistic":
-                    try:
-                        r = await asyncio.to_thread(executor.execute_with_secrets, h, item.get("resolved", command))
-                    except ValueError as ve:
-                        return f"Error during execution: {ve}"
                     storage.update_queue_status(aid, "approved")
-                    entry = {"host_id": host_id, "command": command,
-                             "resolved": item.get("resolved", command),
-                             "source": agent_id or "mcp-transport",
-                             "agent_id": agent_id, "auto_approved": True, **r}
-                    storage.append_audit(entry)
-                    text = f"exit_code={r['exit_code']} (auto-approved, optimistic timeout)"
-                    out = r.get("output", "").strip()
-                    err = r.get("stderr", "").strip()
-                    if out:
-                        text += f"\n{out}"
-                    if err:
-                        text += f"\nSTDERR:\n{err}"
-                    return text
+                    return await _exec_approved(resolved_cmd, " (auto-approved, optimistic timeout)")
                 else:
                     return f"Pending approval (mode={mode}, approval_id={aid}). Approve via WebUI."
-            return f"Approval status unknown (approval_id={aid})"
+            else:
+                return f"Approval status: {st} (approval_id={aid})"
         elif action == "executed":
             r = result["result"]
             text = f"exit_code={r['exit_code']}"
@@ -361,6 +391,98 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
             return text
         else:
             return f"Error: {r.get('error', 'unknown')}"
+
+    elif name == "write_sandbox_file":
+        host_id = args.get("host_id", "")
+        filename = args.get("filename", "")
+        content = args.get("content", "")
+        if not host_id or not filename:
+            return "Error: host_id and filename are required."
+        if not content:
+            return "Error: content is required (empty file not allowed)."
+        h = storage.get_host(host_id)
+        if not h:
+            return f"Error: host '{host_id}' not found."
+        if not h.get("enabled", True):
+            return f"Error: host '{host_id}' is disabled."
+        if allowed_hosts and host_id not in allowed_hosts:
+            return f"Error: agent '{agent_id}' not allowed on host '{host_id}'."
+
+        sandbox_dir = h.get("sandbox_path", "").strip() or "/tmp/mcp-sandbox"
+
+        result = await asyncio.to_thread(
+            ssh_client.write_sandbox_file, h, filename, content, sandbox_dir
+        )
+
+        # Audit
+        entry = {
+            "host_id": host_id,
+            "command": f"write_sandbox_file: {filename}",
+            "source": agent_id or "mcp-transport",
+            "agent_id": agent_id,
+            "status": "ok" if result.get("ok") else "error",
+            "output": f"{result.get('path', '')} ({result.get('bytes', 0)} bytes)"
+                      if result.get("ok") else result.get("error", ""),
+            "exit_code": 0 if result.get("ok") else 1,
+            "duration_ms": result.get("duration_ms", 0),
+        }
+        storage.append_audit(entry)
+        if _bcast_fn:
+            try:
+                await _bcast_fn(entry)
+            except Exception:
+                pass
+
+        if result.get("ok"):
+            return f"OK: {result['path']} ({result['bytes']} bytes, {result.get('duration_ms', 0)}ms)"
+        else:
+            return f"Error: {result.get('error', 'unknown')}"
+
+    elif name == "write_sandbox_file":
+        host_id = args.get("host_id", "")
+        filename = args.get("filename", "")
+        content = args.get("content", "")
+        if not host_id or not filename:
+            return "Error: host_id and filename are required."
+        if not content:
+            return "Error: content is required (empty file not allowed)."
+        h = storage.get_host(host_id)
+        if not h:
+            return f"Error: host '{host_id}' not found."
+        if not h.get("enabled", True):
+            return f"Error: host '{host_id}' is disabled."
+        if allowed_hosts and host_id not in allowed_hosts:
+            return f"Error: agent '{agent_id}' not allowed on host '{host_id}'."
+
+        sandbox_dir = h.get("sandbox_path", "").strip() or "/tmp/mcp-sandbox"
+
+        result = await asyncio.to_thread(
+            ssh_client.write_sandbox_file, h, filename, content, sandbox_dir
+        )
+
+        # Audit
+        entry = {
+            "host_id": host_id,
+            "command": f"write_sandbox_file: {filename}",
+            "source": agent_id or "mcp-transport",
+            "agent_id": agent_id,
+            "status": "ok" if result.get("ok") else "error",
+            "output": f"{result.get('path', '')} ({result.get('bytes', 0)} bytes)"
+                      if result.get("ok") else result.get("error", ""),
+            "exit_code": 0 if result.get("ok") else 1,
+            "duration_ms": result.get("duration_ms", 0),
+        }
+        storage.append_audit(entry)
+        if _bcast_fn:
+            try:
+                await _bcast_fn(entry)
+            except Exception:
+                pass
+
+        if result.get("ok"):
+            return f"OK: {result['path']} ({result['bytes']} bytes, {result.get('duration_ms', 0)}ms)"
+        else:
+            return f"Error: {result.get('error', 'unknown')}"
 
     elif name == "server_health":
         hosts = storage.load_hosts()

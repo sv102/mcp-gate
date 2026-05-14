@@ -198,7 +198,7 @@ async def api_exec(req: ExecReq, x_api_key: str = Header("")):
         raise HTTPException(404, f"Host {req.host_id} not found")
     if not h.get("enabled", True):
         raise HTTPException(403, "Host disabled")
-    if not app_state.check_rate_limit(req.host_id, h.get("rate_limit", 10)):
+    if not app_state.check_rate_limit(f"host:{req.host_id}", h.get("rate_limit", 10)):
         e = {"host_id": req.host_id, "command": req.command, "source": req.source,
              "agent_id": agent_id, "status": "blocked", "reason": "rate_limit"}
         storage.append_audit(e)
@@ -241,9 +241,10 @@ async def admin_exec(req: ExecReq):
 
 @app.post("/api/admin/approve/{aid}")
 async def api_approve(aid: str):
-    it = storage.resolve_approval(aid, "approve")
+    it = storage.resolve_approval(aid, "approved")
     if not it:
         raise HTTPException(404, "Approval not found or already resolved")
+    app_state.signal_approval(aid)  # wake mcp_transport event-wait immediately
     h = storage.get_host(it["host_id"])
     if not h:
         raise HTTPException(404, f"Host '{it['host_id']}' not found")
@@ -266,9 +267,10 @@ async def api_get_pending():
 
 @app.post("/api/admin/reject/{aid}")
 async def api_reject(aid: str):
-    it = storage.resolve_approval(aid, "reject")
+    it = storage.resolve_approval(aid, "rejected")
     if not it:
         raise HTTPException(404, "Approval not found or already resolved")
+    app_state.signal_approval(aid)  # wake mcp_transport event-wait immediately
     e = {"host_id": it["host_id"], "command": it["command"], "source": "manual_reject",
          "approval_id": aid, "agent_id": it.get("agent_id", ""), "status": "rejected"}
     storage.append_audit(e)
