@@ -56,6 +56,17 @@
 <div id="changelog" class="card">
   <h2 x-data x-text="$store.i18n?.t('about.changelog')||'Changelog'"></h2>
   <table>
+    <tr><td class="text-muted" style="width:80px"><b>v0.1.3</b></td><td>
+      <b>SQLite audit log</b> — O(N) JSONL replaced with indexed SQLite (WAL, indexes on ts/host/status/source). Auto-migration on first start.<br>
+      <b>SSH connection pool</b> — reuses paramiko connections per host (TTL 300 s, per-host lock). Eliminates handshake overhead per command.<br>
+      <b>Event-based approvals</b> — MCP transport wakes instantly on approve/reject instead of 2 s polling loop.<br>
+      <b>Rate limiting enforced</b> — host and agent <code>rate_limit</code> now actually checked (was stored but ignored).<br>
+      <b>Command set cache</b> — 5 s in-process cache reduces YAML reads on auth hot path.<br>
+      <b>Token management API</b> — list and revoke active MCP OAuth tokens.<br>
+      <b>Bug fixes</b> — <code>get_queue_item</code> / <code>update_queue_status</code> missing (AttributeError on pending approval),
+      <code>cleanup_expired</code> status mismatch, circular import in backup, SMTP cooldown per-channel,
+      unresolved param placeholders now raise error, WebSocket dead-client timeout protection.
+    </td></tr>
     <tr><td class="text-muted" style="width:80px"><b>v0.1.0</b></td><td>
       <b>MCP Protocol Transport</b> — Streamable HTTP + SSE + OAuth 2.0. Claude.ai, Cursor, Windsurf, Continue, Cline connect natively. OAuth token bound to agent.<br>
       <b>App-level authentication</b> — three modes: basic (bcrypt + HMAC cookie), proxy (Authentik/Keycloak), none. Login page, first-time setup wizard.<br>

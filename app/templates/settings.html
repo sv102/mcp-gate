@@ -272,6 +272,73 @@
     <tr><td class="text-muted">Secrets encryption</td><td><span class="badge badge-ok">Fernet</span></td></tr>
   </table>
 </div>
+
+<!-- MCP OAuth Tokens -->
+<div x-data="tokensApp()" x-init="load()" class="card">
+  <div class="flex-between">
+    <h2 style="margin-top:0">🔑 MCP OAuth Tokens</h2>
+    <button class="btn btn-sm" @click="load()">↻ Refresh</button>
+  </div>
+  <p class="text-muted" style="font-size:13px;margin:0 0 12px">
+    Active OAuth tokens issued to MCP agents. Each token is bound to an agent and expires in 90 days.
+    Revoking a token forces the agent to re-authenticate on next connection.
+  </p>
+  <template x-if="tokens.length === 0">
+    <div class="text-muted" style="font-size:13px;padding:12px 0">No active tokens.</div>
+  </template>
+  <template x-if="tokens.length > 0">
+    <table style="width:100%;font-size:13px;border-collapse:collapse">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:6px 8px;color:var(--text2);font-weight:500">Agent</th>
+          <th style="text-align:left;padding:6px 8px;color:var(--text2);font-weight:500">Token prefix</th>
+          <th style="text-align:left;padding:6px 8px;color:var(--text2);font-weight:500">Expires</th>
+          <th style="text-align:left;padding:6px 8px;color:var(--text2);font-weight:500">Status</th>
+          <th style="padding:6px 8px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="t in tokens" :key="t.token_hash">
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 8px"><code x-text="t.agent_id||'—'"></code></td>
+            <td style="padding:6px 8px"><code x-text="t.token_prefix" style="font-size:11px;color:var(--text2)"></code></td>
+            <td style="padding:6px 8px" x-text="t.expires_in_days + 'd'"></td>
+            <td style="padding:6px 8px">
+              <span x-show="t.active" class="badge badge-ok">active</span>
+              <span x-show="!t.active" class="badge badge-err">expired</span>
+            </td>
+            <td style="padding:6px 8px;text-align:right">
+              <button class="btn btn-red btn-sm" @click="revoke(t.token_hash)" style="padding:3px 10px;font-size:11px">
+                Revoke
+              </button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </template>
+</div>
+
+<script>
+function tokensApp() {
+  return {
+    tokens: [],
+    async load() {
+      try {
+        const r = await fetch('/api/admin/mcp-tokens');
+        if (r.ok) this.tokens = await r.json();
+      } catch(e) { console.error('tokens load:', e); }
+    },
+    async revoke(hash) {
+      if (!confirm('Revoke this token? The agent will need to re-authenticate.')) return;
+      const r = await fetch('/api/admin/mcp-tokens/' + hash, {method:'DELETE'});
+      if (r.ok) { toast('Token revoked', 2000, 'ok'); await this.load(); }
+      else toast('Revoke failed', 2000, 'err');
+    }
+  }
+}
+</script>
+
 {% endblock %}
 {% block scripts %}<script>
 function instApp(){

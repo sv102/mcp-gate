@@ -29,6 +29,29 @@ router = APIRouter(tags=["admin"])
 
 # ═══ Host CRUD ═══
 
+
+def _validate_sandbox_path(path: str) -> str:
+    """Validate sandbox_path on host save.
+    Must be absolute, no path traversal, not in system directories.
+    Returns cleaned path or raises HTTPException(400).
+    """
+    if not path:
+        return ""
+    import os as _os
+    cleaned = _os.path.normpath(path)
+    BLOCKED = ("/etc", "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+               "/lib", "/lib64", "/proc", "/sys", "/dev", "/root",
+               "/var/log", "/var/run", "/boot")
+    if not cleaned.startswith("/"):
+        raise HTTPException(400, f"sandbox_path must be absolute: {path!r}")
+    if ".." in cleaned:
+        raise HTTPException(400, f"sandbox_path must not contain '..': {path!r}")
+    for blocked in BLOCKED:
+        if cleaned == blocked or cleaned.startswith(blocked + "/"):
+            raise HTTPException(400, f"sandbox_path cannot be a system directory: {path!r}")
+    return cleaned
+
+
 @router.get("/api/admin/hosts")
 async def admin_hosts():
     return storage.load_hosts()

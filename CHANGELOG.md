@@ -5,6 +5,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-05-15
+
+### Fixed
+- **CRITICAL: `get_queue_item` / `update_queue_status` missing from storage** — both
+  functions were used by `mcp_transport.py` but never defined, causing `AttributeError`
+  on every pending-approval request via MCP transport
+- **CRITICAL: `cleanup_expired` set status `"approve"`/`"reject"`** instead of
+  `"approved"`/`"rejected"` — mismatch with `mcp_transport.py` status checks meant
+  auto-approve and auto-reject on timeout never worked correctly
+- **Circular import** — `export_backup()` in `storage.py` did `from main import VERSION`;
+  replaced with `from constants import VERSION`
+- **MCP approval polling held connection 120 s** — replaced 2 s polling loop in
+  `mcp_transport._exec_tool` with `asyncio.wait_for(event.wait(), timeout)`;
+  MCP handler now wakes instantly when operator approves/rejects
+- **Rate limiting field ignored** — `host.rate_limit` and `agent.rate_limit` were
+  stored and displayed but never checked at execution time; now enforced in
+  `executor.execute_command()` with sliding 60 s window
+- **WebSocket dead-client accumulation** — `ws_broadcast` had no timeout; slow or
+  disconnected clients could block the broadcast loop. Added `asyncio.wait_for(timeout=2s)`
+  with automatic removal of dead connections
+- **SMTP flood on command storms** — Telegram and SMTP shared a single cooldown key;
+  SMTP could flood independently. Now each channel has its own cooldown counter
+- **Unresolved `{placeholder}` after param substitution** — if template had a
+  `{name}` that was not in `params` spec, it passed silently. Now raises `ValueError`
+
+### Added
+- **SQLite audit log** — replaced O(N) JSONL full-file reads with indexed SQLite
+  (`audit.db`, WAL mode, indexes on ts/host_id/status/source). Automatic one-time
+  migration from `audit.jsonl` on first start; old file renamed to `audit.jsonl.bak`
+- **SSH connection pool** — reuses paramiko connections per host (TTL 300 s,
+  per-host `threading.Lock` for serialised access). Eliminates TCP+SSH handshake
+  overhead on every command
+- **Command set in-process cache** — `get_command_set()` caches results for 5 s,
+  reducing YAML reads on the authorization hot path. Invalidated on write
+- **`asyncio.Event`-based approval signalling** — `app_state.create_approval_event(aid)` /
+  `signal_approval(aid)` infrastructure; `tasks.approval_loop` and manual approve/reject
+  routes both signal the event for instant MCP handler wake-up
+- **MCP token management API** — `GET /api/admin/mcp-tokens` (list active OAuth tokens,
+  masked), `DELETE /api/admin/mcp-tokens/{hash}` (revoke by SHA-256 prefix),
+  `GET /api/admin/mcp-tokens/count`
+- **`SECURE_COOKIE` env var** — controls the `Secure` flag on the session cookie.
+  Default `0` (no Secure flag) for LAN deployments behind Traefik; set `1` when
+  running with direct HTTPS without a TLS-terminating proxy
+
+### Security
+- Approval re-authorization now blocks auto-approve if whitelist changed since queuing
+- Rate limits enforced at executor level (previously cosmetic UI-only field)
+
 ## [0.1.2] — 2026-04-04
 
 ### Fixed
