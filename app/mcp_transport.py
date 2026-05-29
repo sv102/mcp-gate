@@ -60,6 +60,13 @@ def _require_mcp_auth(request: Request) -> dict:
     token = _get_bearer(request)
     if not token:
         raise HTTPException(401, "Missing bearer token")
+    # Static API-key path: an agent's api_key used directly as the Bearer token.
+    # First-party clients (e.g. OpenWebUI) configure this fixed token once — no
+    # OAuth handshake, so there is no per-restart DCR state to lose. Third-party
+    # clients keep using the OAuth 2.0 DCR flow below.
+    aid = storage.verify_agent_key(token)
+    if aid:
+        return {"agent_id": aid, "client_id": "static", "expires": time.time() + 3600}
     entry = access_tokens.get(token)
     if not entry or entry.get("expires", 0) < time.time():
         access_tokens.pop(token, None)
