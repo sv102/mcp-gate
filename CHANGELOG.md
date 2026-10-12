@@ -5,6 +5,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-13
+
+### Added
+- **Admin 2FA (TOTP).** Enrollment wizard on first login (QR code), 10 one-time recovery codes, "remember this
+  device". Can be switched off in Settings → Security (identity confirmation required); emergency reset
+  `docker exec -it mcp-gate python cli.py totp-reset`.
+- **Identity confirmation (step-up).** Password + 2FA code, valid N minutes, for creating agents and issuing keys,
+  secrets, backup/restore, admin console, SSH keys, notification channels, security settings and the MCP token
+  view. The UI asks and retries the action automatically.
+- **Settings → Security.** 2FA requirement, session idle / absolute timeouts, remembered-device days, lockout
+  policy, confirmation window, HTTPS-only sensitive actions, "End all sessions".
+- **Events → notify-gate.** Security and ops events (logins, agent / host / command set / secret changes, key
+  issue, SSH keys, console commands, exports, approvals, timed grants, blocked commands, refused agent keys, OAuth)
+  are classified in one middleware and delivered through a durable outbox with retries to a notify-gate JSON
+  source (`NOTIFY_GATE_URL`, `NOTIFY_GATE_SOURCE`, `NOTIFY_GATE_TOKEN`). Telegram / SMTP as fallback or in
+  parallel, flood aggregation, per-event on/off and severity, delivery journal (Notifications page).
+- **Activity dashboard.** Hourly commands ok / blocked / error / pending (24 h, 7 d, 30 d), per agent and per
+  host, authentication failures, top block reasons and blocked commands; counters survive audit trimming.
+- **Prometheus `/metrics`**, restricted by `METRICS_CIDRS`.
+- Agent keys: **allowed IP/CIDR** and **key lifetime** per agent; last use (time, IP) on the agent card.
+- Client IP in audit entries (`X-Forwarded-For` honoured only from `TRUSTED_PROXIES`).
+- `cli.py`: `totp-reset`, `password`, `revoke-sessions`.
+
+### Changed
+- **Agent keys are stored as HMAC-SHA256** with a server pepper (`MCPGATE_KEY_PEPPER`) and shown once, when
+  issued. Existing keys are migrated on start and keep working; `GET .../reveal-key` returns 410. Creating an
+  agent without a key now issues one.
+- Admin password hashed with argon2id (a bcrypt hash is accepted once and re-hashed).
+- Sessions: signed, idle + absolute timeout, revocation epoch, `SameSite=Strict`; state-changing requests must
+  carry a matching `Origin`.
+- OAuth consent page requires the 2FA code (when enabled) and locks out repeated failures.
+- A refused agent key gets the reason (disabled / grant expired / key expired / IP not allowed).
+- Agent keys are checked before the bcrypt global key (no bcrypt on every request).
+- Master key (`MCPGATE_MASTER_KEY`) and session key (`MCPGATE_SESSION_KEY`) can be kept in `.env`.
+- Dockerfile: `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` build args for private package mirrors.
+
+### Security
+- Dashboard, Agents and Command sets pages embedded encrypted agent keys in the HTML.
+- Instance settings could switch authentication off (`auth_type`) and exposed the password hash to the browser.
+- Config cache corruption: masking the Telegram token in `GET /api/admin/telegram` modified the cached config,
+  so notifications were then sent with the masked token.
+
+### Upgrade notes
+- All admin sessions end after the upgrade; the first login runs 2FA enrollment.
+- Keep `.env` in backups: `MCPGATE_KEY_PEPPER` and `MCPGATE_MASTER_KEY` are needed to verify agent keys and
+  decrypt secrets. New dependencies: `pyotp`, `argon2-cffi`, `segno`.
+
 ## [0.1.6] — 2026-10-12
 
 ### Added
