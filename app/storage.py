@@ -66,10 +66,34 @@ def ensure_dirs():
     _ensure_audit_schema()
 
 
+# mtime-keyed cache for config/registry YAML. Reads compare st_mtime; writes go
+# through _atomic_write which pops the entry, so the cache is correct even when two
+# writes land within one mtime tick. Cuts repeated YAML parsing on hot paths
+# (auth middleware, /health, per-request agent-key + command authorization).
+_yaml_cache: dict[str, tuple] = {}
+
+
+def _load_yaml_file(path: "Path"):
+    """Parse a YAML file through the mtime cache. Returns parsed object or None."""
+    key = str(path)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        _yaml_cache.pop(key, None)
+        return None
+    cached = _yaml_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    data = yaml.safe_load(path.read_text())
+    _yaml_cache[key] = (mtime, data)
+    return data
+
+
 def _atomic_write(path: Path, content: str):
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
+    _yaml_cache.pop(str(path), None)  # invalidate cache on write
 
 
 def _yaml_dump(data):
@@ -78,12 +102,21 @@ def _yaml_dump(data):
 
 # ═══ Fernet (shared) ═══
 
+_fernet_cache: tuple = (0.0, None)  # (mtime, Fernet) — avoids re-reading key file
+
+
 def _get_fernet():
+    global _fernet_cache
     from cryptography.fernet import Fernet
     if not SECRETS_KEY_FILE.exists():
         SECRETS_KEY_FILE.write_bytes(Fernet.generate_key())
         os.chmod(SECRETS_KEY_FILE, 0o600)
-    return Fernet(SECRETS_KEY_FILE.read_bytes().strip())
+    mtime = SECRETS_KEY_FILE.stat().st_mtime
+    if _fernet_cache[1] is not None and _fernet_cache[0] == mtime:
+        return _fernet_cache[1]
+    fernet = Fernet(SECRETS_KEY_FILE.read_bytes().strip())
+    _fernet_cache = (mtime, fernet)
+    return fernet
 
 
 def _encrypt_value(v: str) -> str:
@@ -272,7 +305,8 @@ def load_config() -> dict:
                "notification_templates": _default_templates()}
         save_config(cfg)
         return cfg
-    cfg = yaml.safe_load(CONFIG_FILE.read_text()) or {}
+    cfg = _load_yaml_file(CONFIG_FILE) or {}
+    cfg = dict(cfg)  # copy so callers may mutate without corrupting the cache
     cfg.setdefault("appearance", _default_appearance())
     cfg.setdefault("instance", _default_instance())
     return cfg
@@ -303,12 +337,10 @@ def list_languages() -> list[str]:
 # ═══ Hosts ═══
 
 def load_hosts() -> list[dict]:
-    if not HOSTS_FILE.exists():
-        return []
-    d = yaml.safe_load(HOSTS_FILE.read_text())
+    d = _load_yaml_file(HOSTS_FILE)
     if isinstance(d, list):
-        return d
-    return d.get("hosts", []) if isinstance(d, dict) else []
+        return list(d)
+    return list(d.get("hosts", [])) if isinstance(d, dict) else []
 
 
 def save_hosts(h: list[dict]):
@@ -342,12 +374,10 @@ def delete_host(hid: str) -> bool:
 # ═══ Agents ═══
 
 def load_agents() -> list[dict]:
-    if not AGENTS_FILE.exists():
-        return []
-    d = yaml.safe_load(AGENTS_FILE.read_text())
+    d = _load_yaml_file(AGENTS_FILE)
     if isinstance(d, list):
-        return d
-    return d.get("agents", []) if isinstance(d, dict) else []
+        return list(d)
+    return list(d.get("agents", [])) if isinstance(d, dict) else []
 
 
 def save_agents(a: list[dict]):
@@ -356,6 +386,16 @@ def save_agents(a: list[dict]):
 
 def get_agent(aid: str) -> Optional[dict]:
     return next((a for a in load_agents() if a.get("id") == aid), None)
+
+
+def agent_active(a: Optional[dict]) -> bool:  # SV_MCPGATE_OPS
+    """Enabled and, for timed agents, inside a live grant. Fail closed."""
+    if not a or not a.get("enabled", True):
+        return False
+    if int(a.get("auto_off_min") or 0) <= 0:  # permanent agent: grant fields ignored
+        return True
+    u = a.get("enabled_until") or 0
+    return bool(u) and time.time() <= u
 
 
 def upsert_agent(agent: dict):
@@ -402,7 +442,7 @@ def verify_agent_key(provided_key: str) -> Optional[str]:
         try:
             if _decrypt_value(enc_key) == provided_key:
                 a = get_agent(aid)
-                if a and a.get("enabled", True):
+                if agent_active(a) and a.get("encrypted_api_key") == enc_key:  # SV_MCPGATE_016: rotated key must not survive in cache
                     return aid
                 else:
                     _agent_key_cache.pop(enc_key, None)
@@ -410,7 +450,7 @@ def verify_agent_key(provided_key: str) -> Optional[str]:
             _agent_key_cache.pop(enc_key, None)
     # Cache miss: full scan
     for a in load_agents():
-        if not a.get("enabled", True):
+        if not agent_active(a):  # SV_MCPGATE_OPS
             continue
         enc = a.get("encrypted_api_key")
         if not enc:
@@ -425,9 +465,27 @@ def verify_agent_key(provided_key: str) -> Optional[str]:
     return None
 
 
+def agent_id_for_key(provided_key: str) -> Optional[str]:  # SV_MCPGATE_OPS p4
+    """Agent id for a key regardless of enabled/grant (to explain a refusal)."""
+    for a in load_agents():
+        enc = a.get("encrypted_api_key")
+        try:
+            if enc and _decrypt_value(enc) == provided_key:
+                return a["id"]
+        except Exception:
+            continue
+    return None
+
+
 def invalidate_agent_key_cache():
     """Clear agent key cache. Call after agent CRUD operations."""
     _agent_key_cache.clear()
+
+
+def public_agent(a: dict) -> dict:  # SV_MCPGATE_016: key material never leaves the server
+    d = {k: v for k, v in a.items() if k != "encrypted_api_key"}
+    d["has_key"] = bool(a.get("encrypted_api_key"))
+    return d
 
 def get_agent_types() -> dict:
     return AGENT_TYPES
@@ -436,12 +494,10 @@ def get_agent_types() -> dict:
 # ═══ Command Sets ═══
 
 def load_command_sets() -> list[dict]:
-    if not COMMAND_SETS_FILE.exists():
-        return []
-    d = yaml.safe_load(COMMAND_SETS_FILE.read_text())
+    d = _load_yaml_file(COMMAND_SETS_FILE)
     if isinstance(d, list):
-        return d
-    return d.get("sets", []) if isinstance(d, dict) else []
+        return list(d)
+    return list(d.get("sets", [])) if isinstance(d, dict) else []
 
 
 def save_command_sets(s: list[dict]):
@@ -575,12 +631,10 @@ def find_whitelist_entry(host: dict, cmd: str) -> Optional[dict]:
 # ═══ Secrets Vault ═══
 
 def load_secrets() -> list[dict]:
-    if not SECRETS_FILE.exists():
-        return []
-    d = yaml.safe_load(SECRETS_FILE.read_text())
+    d = _load_yaml_file(SECRETS_FILE)
     if isinstance(d, list):
-        return d
-    return d.get("secrets", []) if isinstance(d, dict) else []
+        return list(d)
+    return list(d.get("secrets", [])) if isinstance(d, dict) else []
 
 
 def save_secrets(s: list[dict]):
@@ -837,6 +891,19 @@ def resolve_approval(aid: str, decision: str) -> Optional[dict]:
 
 def get_pending_approvals() -> list[dict]:
     return [i for i in load_queue() if i["status"] == "pending"]
+
+
+def set_queue_result(aid: str, result: dict) -> bool:
+    """SV_MCPGATE_V015: store the single execution result for the MCP waiter; drop the payload."""
+    keep = ("status", "exit_code", "output", "stderr", "error", "duration_ms", "truncated")
+    q = load_queue()
+    for i in q:
+        if i.get("approval_id") == aid:
+            i["result"] = {k: result[k] for k in keep if k in result}
+            i.pop("payload", None)
+            save_queue(q)
+            return True
+    return False
 
 
 def get_queue_item(aid: str) -> Optional[dict]:

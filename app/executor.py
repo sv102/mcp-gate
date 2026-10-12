@@ -11,6 +11,9 @@ Changes vs previous:
 
 import asyncio
 import functools
+import html
+import re
+import shlex
 import time
 import logging
 from typing import Optional, Callable
@@ -32,16 +35,80 @@ def get_exec_delay(host: dict, wl_entry: dict) -> float:
     return wl_entry.get("exec_delay", host.get("exec_delay", 0))
 
 
+# ── SV_MCPGATE_V015: generic output scrubber (applied to every SSH result) ──
+_SCRUB = [
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+     "-----PRIVATE KEY REDACTED-----"),
+    (re.compile(r"(?i)([\w.-]*(?:passw(?:or)?d|secret|token|api[_-]?key|private[_-]?key|access[_-]?key)[\w.-]*"
+                r"[\"']?\s*[=:]\s*[\"']?)[^\s\"',;}]{4,}"), r"\1***"),
+    (re.compile(r"(?i)\b(bearer|basic)\s+[a-z0-9._~+/=-]{12,}"), r"\1 ***"),
+    (re.compile(r"\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}"), "***JWT***"),
+    (re.compile(r"(\b[a-z][a-z0-9+.-]*://[^:/\s@]+:)[^@\s/]+@"), r"\1***@"),
+]
+
+
+def scrub_generic(text: str) -> str:
+    for rx, repl in _SCRUB:
+        text = rx.sub(repl, text)
+    return text
+
+
+# ── SV_MCPGATE_V015: deny-sets are matched against the RESOLVED command ──
+# A deny entry ("rm", "docker rm", "zfs destroy") matches as a word-prefix of any simple
+# command in the list/pipeline/subshell; wrappers (sudo, env, timeout, ...) and VAR=val are skipped.
+_SEG = re.compile(r"\|\||&&|[;|&\n]|\$\(|`")
+_WRAPPERS = {"sudo", "env", "nohup", "exec", "command", "nice", "timeout", "busybox", "xargs"}
+
+
+def deny_hit(cmd: str, deny: set) -> Optional[str]:
+    rules = [d.split() for d in deny if d.strip()]
+    for seg in _SEG.split(cmd):
+        try:
+            w = shlex.split(seg)
+        except ValueError:
+            w = seg.split()
+        while w and (w[0].rsplit("/", 1)[-1] in _WRAPPERS or w[0].startswith("-")
+                     or w[0].isdigit() or re.fullmatch(r"[A-Za-z_]\w*=.*", w[0])):
+            w = w[1:]
+        if not w:
+            continue
+        w[0] = w[0].rsplit("/", 1)[-1]
+        for dw in rules:
+            if w[:len(dw)] == dw:
+                return " ".join(dw)
+    return None
+
+
+def run_queued(item: dict) -> dict:
+    """SV_MCPGATE_V015: the ONLY place an approved queue item is executed
+    (main.api_approve / tasks.approval_loop). The MCP waiter never executes."""
+    h = storage.get_host(item["host_id"])
+    if not h:
+        return {"status": "error", "error": f"host '{item['host_id']}' not found", "duration_ms": 0}
+    if item.get("kind") == "write_sandbox":
+        r = ssh_client.write_sandbox_file(h, item["filename"], item.get("payload", ""), item["sandbox_dir"])
+        ok = bool(r.get("ok"))
+        return {"status": "ok" if ok else "error", "exit_code": 0 if ok else 1,
+                "output": f"{r.get('path', '')} ({r.get('bytes', 0)} B, sha256={item.get('sha256', '')[:16]})"
+                          if ok else "",
+                "error": r.get("error", ""), "duration_ms": r.get("duration_ms", 0)}
+    try:
+        return execute_with_secrets(h, item.get("resolved", item["command"]))
+    except ValueError as ve:
+        return {"status": "error", "error": str(ve), "duration_ms": 0}
+
+
 def execute_with_secrets(host: dict, cmd: str) -> dict:
     """Execute command via SSH with secret substitution and output scrubbing.
     Synchronous — must be called via asyncio.to_thread() from async contexts.
     """
     resolved, scrub = storage.substitute_secrets(cmd, host["id"])
     result = ssh_client.execute(host, resolved)
-    if scrub:
-        for k in ("output", "stderr"):
-            if result.get(k):
+    for k in ("output", "stderr"):
+        if result.get(k):
+            if scrub:
                 result[k] = storage.scrub_output(result[k], scrub)
+            result[k] = scrub_generic(result[k])  # SV_MCPGATE_V015
     return result
 
 
@@ -134,6 +201,19 @@ async def execute_command(
             await _bcast(entry)
             return {"action": "blocked", "reason": str(ve), "entry": entry}
 
+    # ── 3b. SV_MCPGATE_V015: deny-sets on the resolved command ──
+    deny = storage.get_effective_deny(host)
+    if agent:
+        deny = deny | storage._collect_commands_from_sets(agent.get("command_sets", []), "deny")
+    hit = deny_hit(resolved_cmd, deny)
+    if hit:
+        reason = f"blocked by deny rule '{hit}'"
+        entry = {"host_id": host["id"], "command": command, "resolved": resolved_cmd, "source": source,
+                 "agent_id": agent_id, "status": "blocked", "reason": reason}
+        storage.append_audit(entry)
+        await _bcast(entry)
+        return {"action": "blocked", "reason": reason, "entry": entry}
+
     # ── 4. Approval mode routing ──
     mode = get_approval_mode(host, wl)
     delay = get_exec_delay(host, wl)
@@ -183,7 +263,7 @@ async def execute_command(
     }
     await _bcast(pending_event)
     await notifications.notify("approval",
-                               f"Pending\n{host['id']}: {command}\nMode: {mode}")
+                               f"Pending\n{host['id']}: <code>{html.escape(resolved_cmd)}</code>\nMode: {mode}")
     return {
         "action": "pending",
         "approval_id": aid,

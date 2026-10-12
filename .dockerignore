@@ -20,3 +20,8 @@ SECURITY.md
 NOTICE
 LICENSE
 compose.override.yaml
+
+# SV_MCPGATE_V015: patterns without **/ match only the context root
+**/*.bak*
+**/__pycache__
+_backup/

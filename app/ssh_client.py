@@ -28,7 +28,7 @@ log = logging.getLogger("mcp-gate.ssh")
 # Per-host Lock serialises access — paramiko is not concurrent-safe per client.
 _pool: dict[str, tuple] = {}
 _pool_locks: dict[str, "threading.Lock"] = {}
-_pool_meta: dict[str, float] = {}  # key → created_at
+_pool_locks_guard = threading.Lock()  # guards creation of per-key locks
 POOL_TTL = 300  # seconds; idle connection dropped after 5 minutes
 SSH_TIMEOUT = 30
 MAX_OUTPUT_BYTES = 65536
@@ -378,12 +378,19 @@ def write_sandbox_file(host: dict, filename: str, content: str,
         client = _connect(host)
         sftp = client.open_sftp()
 
-        # Ensure sandbox dir exists
+        # Ensure sandbox dir exists (SV_MCPGATE_V015: private 0700, owned by the SSH user)
         try:
-            sftp.stat(sandbox_dir)
+            st = sftp.stat(sandbox_dir)
         except FileNotFoundError:
-            # Create parent dirs if needed (one level only)
-            sftp.mkdir(sandbox_dir)
+            sftp.mkdir(sandbox_dir, mode=0o700)
+            st = sftp.stat(sandbox_dir)
+        _, so, _ = client.exec_command("id -u", timeout=10)
+        own_uid = int(so.read().strip() or -1)
+        if st.st_uid != own_uid or (st.st_mode & 0o022):
+            sftp.close()
+            client.close()
+            return {"ok": False, "error": f"Sandbox {sandbox_dir} must be owned by the SSH user "
+                    "and not group/world-writable (possible /tmp squatting)"}
 
         with sftp.open(path, 'w') as f:
             f.write(content)
@@ -429,44 +436,69 @@ def test_connection(host: dict) -> dict:
         return {"ok": False, "message": str(e)}
 
 
+def _run_channel(client, command: str, timeout: int, max_bytes: int):
+    """SV_MCPGATE_V015: drain stdout/stderr WHILE the command runs (no SSH window deadlock on
+    large output) and enforce a hard deadline (old code blocked in recv_exit_status forever)."""
+    ch = client.get_transport().open_session(timeout=timeout)
+    ch.exec_command(command)
+    out, err, cut = bytearray(), bytearray(), False
+    deadline = time.monotonic() + timeout
+    exit_at = None
+    try:
+        while True:
+            busy = False
+            while ch.recv_ready():
+                d = ch.recv(32768)
+                busy = True
+                room = max(max_bytes - len(out), 0)
+                out += d[:room]
+                cut = cut or len(d) > room
+            while ch.recv_stderr_ready():
+                d = ch.recv_stderr(32768)
+                busy = True
+                err += d[:max(max_bytes - len(err), 0)]
+            if ch.exit_status_ready() and not busy:
+                exit_at = exit_at or time.monotonic()
+                if ch.eof_received or time.monotonic() - exit_at > 0.5:
+                    return ch.recv_exit_status(), bytes(out), bytes(err), cut
+            if time.monotonic() > deadline:
+                raise TimeoutError
+            if not busy:
+                time.sleep(0.02)
+    finally:
+        ch.close()
+
+
 def execute(host: dict, command: str) -> dict:
     t0 = time.time()
+    timeout = int(host.get("ssh_timeout") or SSH_TIMEOUT)
+
+    def ms():
+        return int((time.time() - t0) * 1000)
+
     try:
         client = _get_or_connect(host)
-        _, stdout, stderr = client.exec_command(command, timeout=SSH_TIMEOUT)
-
-        exit_code = stdout.channel.recv_exit_status()
-        out = stdout.read(MAX_OUTPUT_BYTES).decode("utf-8", errors="replace")
-        err = stderr.read(MAX_OUTPUT_BYTES).decode("utf-8", errors="replace")
-
-        truncated = False
-        try:
-            extra = stdout.read(1)
-            if extra:
-                truncated = True
-                out += "\n... [truncated at 64KB]"
-        except Exception:
-            pass
-
+        exit_code, out_b, err_b, truncated = _run_channel(client, command, timeout, MAX_OUTPUT_BYTES)
+        out = out_b.decode("utf-8", errors="replace")
+        err = err_b.decode("utf-8", errors="replace")
+        if truncated:
+            out += f"\n... [truncated at {MAX_OUTPUT_BYTES // 1024}KB]"
+        max_lines = int(host.get("max_output_lines") or 0)
+        lines = out.splitlines()
+        if max_lines and len(lines) > max_lines:
+            out = "\n".join(lines[:max_lines]) + f"\n... [truncated: {len(lines)} lines, limit {max_lines}]"
+            truncated = True
         # Note: client returned to pool — not closed here
-        duration_ms = int((time.time() - t0) * 1000)
-
-        return {
-            "status": "ok",
-            "output": out,
-            "stderr": err,
-            "exit_code": exit_code,
-            "duration_ms": duration_ms,
-            "truncated": truncated,
-        }
+        return {"status": "ok", "output": out, "stderr": err, "exit_code": exit_code,
+                "duration_ms": ms(), "truncated": truncated}
     except paramiko.AuthenticationException:
-        return {"status": "error", "error": "SSH auth failed", "duration_ms": int((time.time() - t0) * 1000)}
+        return {"status": "error", "error": "SSH auth failed", "duration_ms": ms()}
     except paramiko.SSHException as e:
-        return {"status": "error", "error": f"SSH: {e}", "duration_ms": int((time.time() - t0) * 1000)}
+        return {"status": "error", "error": f"SSH: {e}", "duration_ms": ms()}
     except TimeoutError:
-        return {"status": "error", "error": f"Timeout ({SSH_TIMEOUT}s)", "duration_ms": int((time.time() - t0) * 1000)}
+        return {"status": "error", "error": f"Timeout ({timeout}s), channel closed", "duration_ms": ms()}
     except Exception as e:
-        return {"status": "error", "error": str(e), "duration_ms": int((time.time() - t0) * 1000)}
+        return {"status": "error", "error": str(e), "duration_ms": ms()}
 
 
 class _ManagedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
@@ -495,9 +527,9 @@ def _pool_key(host: dict) -> str:
 
 
 def _get_pool_lock(key: str) -> "threading.Lock":
-    if key not in _pool_locks:
-        _pool_locks[key] = threading.Lock()
-    return _pool_locks[key]
+    # Guarded so two threads can't create competing locks for the same key.
+    with _pool_locks_guard:
+        return _pool_locks.setdefault(key, threading.Lock())
 
 
 def _get_or_connect(host: dict) -> paramiko.SSHClient:

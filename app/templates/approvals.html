@@ -42,6 +42,9 @@
         <b style="margin-left:12px" x-text="$store.i18n.t('approvals.command')+':'"></b> <code x-text="p.command"></code>
         <b style="margin-left:12px" x-text="$store.i18n.t('approvals.mode')+':'"></b> <span x-text="p.approval_mode"></span>
       </div>
+      <!-- SV_MCPGATE_V015: show what will really run / be written -->
+      <div class="mt-2" style="font-size:12px" x-show="p.resolved && p.resolved !== p.command"><b>&rarr;</b> <code x-text="p.resolved"></code></div>
+      <pre class="mt-2" style="font-size:11px;max-height:360px;overflow:auto;white-space:pre-wrap" x-show="p.payload" x-text="p.payload"></pre>
       <div class="mt-2 text-muted" style="font-size:12px">
         <span x-text="$store.i18n.t('approvals.created')+': '+ts(p.created_at)"></span>
       </div>

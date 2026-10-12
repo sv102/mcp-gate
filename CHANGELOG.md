@@ -5,6 +5,98 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-10-12
+
+### Added
+- **Timed (just-in-time) agents.** New agent field `auto_off_min` (0–1440). When it is greater than 0,
+  switching the agent on opens a grant for that many minutes; a background task switches the agent off
+  when the grant expires. Permanent agents (`0`) behave as before. Every entry point (static agent key,
+  OAuth token, `/api/exec`, tool calls) checks `storage.agent_active()`.
+- Agents UI: "Auto-off, min" field, countdown badge for live grants, periodic refresh of the list.
+- `ops` notification event (grant on / manual off / expired), not subject to cooldown.
+
+### Changed
+- A request with the key of a disabled agent or of an expired grant gets **403 with the reason**
+  instead of a generic 401.
+- Saving a permanent agent clears a stale grant timestamp.
+
+### Security
+- **Rotated agent keys stayed valid.** The key cache was not invalidated on key regeneration or edit,
+  and cache hits were not checked against the agent's current key.
+- **`/ws/audit` required no session.** The HTTP auth middleware does not apply to WebSocket, so the live
+  audit stream (including command output) was readable by anyone able to reach the port.
+- `GET /api/admin/agents` returned `encrypted_api_key` to the browser; it now returns `has_key` only
+  (fixes the "No key" badge shown on every agent).
+- A queued command could still run (manual approval or optimistic timeout) after its agent was
+  disabled or its grant expired; such requests are now rejected.
+- Key reveal and key regeneration are written to the audit log.
+- The OAuth "agent not found" page no longer reflects the submitted `agent_id`.
+
+### Fixed
+- `server.json` version was stale.
+
+## [0.1.5] — 2026-10-01
+
+### Security
+- **Double execution of approved commands** — manual approve (`/api/admin/approve`) and optimistic
+  timeout (`tasks.approval_loop`) executed the command, then the waiting MCP handler executed it again.
+  Now `executor.run_queued()` is the single executor; the waiter only reads the stored result.
+- **`write_sandbox_file` had no authorization** — now requires a whitelist entry `write_sandbox_file`
+  (host + agent sets) and honours its approval mode; operator sees full content + sha256.
+- **Parameter injection** — every parameter value is `shlex.quote`d; absolute paths reject `..`/`//`
+  and a protected list (`/root`, `/proc`, `.ssh`, `/opt/mcp-gate/data`, shadow, sudoers, host keys).
+- **Deny-sets were exact-string only (never matched)** — now word-prefix matched per simple command
+  of the resolved command line.
+- **OAuth** — PKCE S256 enforced; code bound to client_id + redirect_uri; redirect_uri must be
+  registered (https or loopback); clients persisted; tokens stored as SHA-256; `?token=` removed;
+  constant-time MCP_TOKEN compare; `state` URL-encoded.
+- **Output scrubber** — private keys, `*password*/*token*/*secret*/api_key` values, Bearer, JWT,
+  URL credentials are redacted in every result.
+- `os.umask(0o077)`: files under `/data` are created 0600.
+
+### Fixed
+- SSH exec no longer deadlocks on large output; per-host `ssh_timeout` / `max_output_lines` applied.
+- Sandbox dir created 0700 and refused if not owned by the SSH user or group/world-writable.
+- Approval notifications bypass cooldown; Telegram HTML escaping of commands.
+- Approvals UI shows the resolved command and file payload.
+- `exec_command` tool description reduced to set ids (was ~10 KB per request).
+- `.dockerignore`: `**/*.bak*` (root-only patterns let app/*.bak into the image).
+
+## [0.1.4] — 2026-05-29
+
+### Security
+- **Reflected XSS in OAuth authorize page** — `client_id`, `redirect_uri`, `state` and
+  `code_challenge` query params were interpolated into the authorization form unescaped.
+  Since that page also collects the `MCP_TOKEN`, an injected script could exfiltrate it.
+  All reflected values are now HTML-escaped.
+
+### Added
+- **Static Bearer auth for first-party clients** — `_require_mcp_auth` now accepts an
+  agent's `api_key` directly as a Bearer token (via `storage.verify_agent_key`), bypassing
+  the OAuth 2.0 DCR handshake. First-party clients (e.g. OpenWebUI) no longer break after a
+  container/host restart, because there is no in-memory DCR client/auth-code state to lose.
+  The OAuth DCR flow is unchanged for third-party clients.
+
+### Performance
+- **Cached Fernet instance** — the secrets key file was re-read from disk on every
+  encrypt/decrypt; `verify_agent_key` does this per agent on every MCP request. The Fernet
+  object is now cached and refreshed only when the key file's mtime changes.
+- **mtime-cached YAML loaders** — `load_config`, `load_hosts`, `load_agents`,
+  `load_command_sets` and `load_secrets` re-read and re-parsed YAML on every call (auth
+  middleware, `/health`, per-request authorization). Now served from an mtime-keyed cache
+  invalidated on write, eliminating redundant disk reads and parsing on hot paths.
+
+### Fixed
+- **SSH pool lock race** — `_get_pool_lock` had a check-then-create TOCTOU window allowing
+  two threads to create competing locks for the same host; now guarded with `setdefault`.
+- **known_hosts removal ignored port** — the UI "clear fingerprint" action hardcoded port 22;
+  it now parses paramiko's `[host]:port` form and sends the real port.
+- **`api_auth_status` evaluated auth twice** per request; now computed once.
+- **`server.json` version was stale** (0.1.2) and out of sync with the package version.
+
+### Removed
+- Dead `_pool_meta` dict in `ssh_client.py` (declared, never used).
+
 ## [0.1.3] — 2026-05-15
 
 ### Fixed

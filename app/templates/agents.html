@@ -52,8 +52,9 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
           </div>
         </div>
         <div class="flex" style="gap:4px;flex-wrap:wrap;margin-bottom:8px">
-          <span :class="a.api_key_hash?'badge badge-ok':'badge badge-warn'" style="font-size:10px" x-text="a.api_key_hash?'🔑 Key':'No key'"></span>
+          <span :class="a.has_key?'badge badge-ok':'badge badge-warn'" style="font-size:10px" x-text="a.has_key?'🔑 Key':'No key'"></span>
           <span class="badge" style="font-size:10px" x-text="(a.rate_limit||60)+'/min'"></span>
+          <span x-show="(a.auto_off_min||0)>0" class="badge badge-warn" style="font-size:10px" :title="'Временный доступ: включение = грант на '+a.auto_off_min+' мин'" x-text="grantLabel(a)"></span>
           <span x-show="(a.allowed_hosts||[]).length" class="badge badge-cyan" style="font-size:10px" x-text="(a.allowed_hosts||[]).length+' hosts'"></span>
           <span x-show="!(a.allowed_hosts||[]).length" class="badge" style="font-size:10px">All hosts</span>
         </div>
@@ -112,6 +113,10 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
             </label>
           </div>
         </div>
+
+        <!-- SV_MCPGATE_OPS: timed grant -->
+        <div class="form-row"><label>Авто-выключение, мин <span class="text-muted" style="font-weight:normal;font-size:11px">0 = постоянно; N&gt;0 = включение даёт доступ на N мин, потом агент выключается сам (аудит + Telegram)</span></label>
+          <input type="number" x-model.number="f.auto_off_min" min="0" max="1440" style="max-width:140px"></div>
 
         <!-- Description -->
         <div class="form-row"><label>Description</label><textarea x-model="f.description" rows="2" placeholder="Optional description"></textarea></div>
@@ -177,7 +182,8 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
             <div class="text-muted" x-text="getTypeName(detail.agent_type)"></div>
             <div class="flex mt-2">
               <span class="badge" :class="detail.enabled!==false?'badge-ok':'badge-err'" x-text="detail.enabled!==false?'Enabled':'Disabled'"></span>
-              <span :class="detail.api_key_hash?'badge badge-ok':'badge badge-warn'" x-text="detail.api_key_hash?'Key configured':'No key'"></span>
+              <span :class="detail.has_key?'badge badge-ok':'badge badge-warn'" x-text="detail.has_key?'Key configured':'No key'"></span>
+              <span x-show="(detail.auto_off_min||0)>0" class="badge badge-warn" x-text="grantLabel(detail)"></span>
             </div>
           </div>
         </div>
@@ -294,7 +300,7 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
 {% endblock %}
 {% block scripts %}<script>
 function agentsApp(){
-  const D={id:'',name:'',agent_type:'custom',icon:'',enabled:true,description:'',rate_limit:60,allowed_hosts:[],command_sets:[],api_key:''};
+  const D={id:'',name:'',agent_type:'custom',icon:'',enabled:true,description:'',rate_limit:60,allowed_hosts:[],command_sets:[],api_key:'',auto_off_min:0};
   return{
     agents:[],types:{},sets:[],allHosts:[],
     showAdd:false,editing:false,f:JSON.parse(JSON.stringify(D)),
@@ -324,6 +330,7 @@ function agentsApp(){
       this.types=await api('GET','/api/agent-types');
       this.sets=await api('GET','/api/admin/command-sets');
       try{this.allHosts=await api('GET','/api/admin/hosts')}catch(e){this.allHosts=[]}
+      setInterval(async()=>{try{this.agents=await api('GET','/api/admin/agents')}catch(e){}},30000);
     },
     reset(){this.f=JSON.parse(JSON.stringify(D))},
     getTypeIcon(t){return this.types[t]?.icon||'🤖'},
@@ -335,6 +342,7 @@ function agentsApp(){
     getSetColor(sid){return this.sets.find(s=>s.id===sid)?.color||'#6366f1'},
     getSetType(sid){return this.sets.find(s=>s.id===sid)?.type||'allow'},
     getSetEnabled(sid){const s=this.sets.find(x=>x.id===sid);return s?.enabled!==false},
+    grantLabel(a){const m=a.auto_off_min||0;if(!m)return '';const left=Math.ceil(((a.enabled_until||0)*1000-Date.now())/60000);return (a.enabled!==false&&left>0)?('⏱ осталось '+left+' мин'):('⏱ '+m+' мин')},
     toggleHost(hid){
       this.f.allowed_hosts=this.f.allowed_hosts||[];
       const i=this.f.allowed_hosts.indexOf(hid);
@@ -369,7 +377,7 @@ function agentsApp(){
     async genKey(id){
       if(!confirm('Generate new API key? Old key will stop working.'))return;
       try{const r=await api('POST','/api/admin/agents/'+id+'/generate-key');
-        if(r.api_key){this.revealedKey=r.api_key;toast('Key generated! Save it now.',8000,'warn');this.agents=await api('GET','/api/admin/agents')}
+        if(r.api_key){this.revealedKey=r.api_key;if(this.detail)this.detail.has_key=true;toast('Key generated! Save it now.',8000,'warn');this.agents=await api('GET','/api/admin/agents')}
       }catch(e){toast(e.message,5000,'err')}
     },
     async revealKey(id){

@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+os.umask(0o077)  # SV_MCPGATE_V015: every file written under /data is 0600
 import storage, ssh_client, notifications, params
 import auth
 import mcp_transport
@@ -33,7 +34,7 @@ from constants import VERSION, full_version, DEV_BUILD
 @asynccontextmanager
 async def lifespan(a: FastAPI):
     storage.ensure_dirs()
-    bg = [asyncio.create_task(f()) for f in (tasks.approval_loop, tasks.trim_loop, tasks.ping_loop)]
+    bg = [asyncio.create_task(f()) for f in (tasks.approval_loop, tasks.trim_loop, tasks.ping_loop, tasks.ops_expiry_loop)]
     log.info(f"mcp-gate v{VERSION} started")
     yield
     for t in bg:
@@ -111,9 +112,10 @@ async def api_logout():
 
 @app.get("/api/auth/status")
 async def api_auth_status(request: Request):
+    user = auth.check_request(request)
     return {
-        "authenticated": auth.check_request(request) is not None,
-        "user": auth.check_request(request),
+        "authenticated": user is not None,
+        "user": user,
         "auth_type": auth.get_auth_type(),
         "needs_setup": auth.needs_setup(),
     }
@@ -241,17 +243,27 @@ async def admin_exec(req: ExecReq):
 
 @app.post("/api/admin/approve/{aid}")
 async def api_approve(aid: str):
+    q = storage.get_queue_item(aid) or {}  # SV_MCPGATE_016: never execute for an inactive agent
+    qa = q.get("agent_id") or ""
+    if q.get("status") == "pending" and qa not in ("", "__global__") and not storage.agent_active(storage.get_agent(qa)):
+        it = storage.resolve_approval(aid, "rejected")
+        app_state.signal_approval(aid)
+        if it:
+            e = {"host_id": it["host_id"], "command": it["command"], "source": "manual_approve_denied",
+                 "approval_id": aid, "agent_id": qa, "status": "blocked", "reason": "agent inactive"}
+            storage.append_audit(e)
+            await app_state.ws_broadcast(e)
+        raise HTTPException(409, "Agent is disabled or its grant expired: request rejected")
     it = storage.resolve_approval(aid, "approved")
     if not it:
         raise HTTPException(404, "Approval not found or already resolved")
-    app_state.signal_approval(aid)  # wake mcp_transport event-wait immediately
-    h = storage.get_host(it["host_id"])
-    if not h:
-        raise HTTPException(404, f"Host '{it['host_id']}' not found")
+    # SV_MCPGATE_V015: execute ONCE here, store the result, then wake the MCP waiter (no double exec)
     try:
-        r = await asyncio.to_thread(executor.execute_with_secrets, h, it.get("resolved", it["command"]))
+        r = await asyncio.to_thread(executor.run_queued, it)
     except Exception as exc:
         r = {"status": "error", "error": str(exc), "duration_ms": 0}
+    storage.set_queue_result(aid, r)
+    app_state.signal_approval(aid)
     e = {"host_id": it["host_id"], "command": it["command"], "source": "manual_approve",
          "approval_id": aid, "agent_id": it.get("agent_id", ""), **r}
     storage.append_audit(e)
@@ -293,6 +305,9 @@ async def api_approval_status(aid: str):
 
 @app.websocket("/ws/audit")
 async def ws_audit(ws: WebSocket):
+    if not auth.check_request(ws):  # SV_MCPGATE_016: HTTP middleware does not cover WebSocket
+        await ws.close(code=4401)
+        return
     await ws.accept()
     app_state.ws_clients.add(ws)
     try:

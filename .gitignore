@@ -11,3 +11,4 @@ app.bak.*
 compose.override.yaml
 DEVLOG.md
 _old_backup/
+_backup/

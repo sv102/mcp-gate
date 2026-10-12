@@ -445,8 +445,11 @@ function sshKeysApp(){
     async clearFingerprint(hostname){
       if(!confirm(`Remove known_hosts entry for ${hostname}?`))return;
       try{
-        const port=22; // TODO: extract from host data
-        await api('POST','/api/admin/ssh/clear-fingerprint',{hostname,port});
+        // paramiko stores non-standard ports as "[host]:port" — parse it out
+        let host=hostname, port=22;
+        const m=String(hostname).match(/^\[(.+)\]:(\d+)$/);
+        if(m){host=m[1];port=parseInt(m[2],10);}
+        await api('POST','/api/admin/ssh/clear-fingerprint',{hostname:host,port});
         toast('Fingerprint cleared',2000,'ok');
         await this.loadKnownHosts();
       }catch(e){toast(e.message,4000,'err')}

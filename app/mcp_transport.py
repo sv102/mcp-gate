@@ -5,12 +5,15 @@
 SSE + JSON-RPC 2.0 + OAuth 2.0. OAuth token bound to agent_id.
 Tools: exec_command, list_hosts, list_capabilities, write_sandbox_file, server_health
 """
-import asyncio, json, os, secrets, time, logging, difflib
+import asyncio, base64, hashlib, hmac, json, os, secrets, time, logging, difflib
+from html import escape as _esc
+from urllib.parse import urlencode, urlparse
 from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Request, HTTPException, Form
 from fastapi.responses import StreamingResponse, HTMLResponse, RedirectResponse, JSONResponse
 import storage, ssh_client, params
 import executor
+import notifications
 import app_state
 
 _bcast_fn = None
@@ -25,9 +28,11 @@ BASE_URL = os.getenv("MCP_BASE_URL", "")
 TOKENS_FILE = os.path.join(os.getenv("DATA_DIR", "/data"), "mcp_oauth_tokens.json")
 from constants import VERSION, full_version
 
-# NOTE: oauth_clients and auth_codes are in-memory only — lost on container restart.
-# This is acceptable: OAuth DCR clients re-register automatically on reconnect.
-# access_tokens are persisted to TOKENS_FILE (mcp_oauth_tokens.json) and survive restarts.
+# NOTE: auth_codes are in-memory (5 min TTL); oauth_clients persist to CLIENTS_FILE (v0.1.5).
+# access_tokens are persisted to TOKENS_FILE and survive restarts. First-party clients
+# (e.g. OpenWebUI) should authenticate with an agent api_key as a static Bearer token
+# (see _require_mcp_auth) — this has no OAuth handshake state and is restart-proof.
+# The OAuth DCR flow below remains for third-party MCP clients.
 oauth_clients: dict = {}
 auth_codes: dict = {}
 
@@ -48,13 +53,46 @@ def _save_tokens(tokens: dict):
     except Exception:
         log.warning("Failed to save MCP OAuth tokens")
 
-access_tokens = _load_tokens()
+CLIENTS_FILE = os.path.join(os.getenv("DATA_DIR", "/data"), "mcp_oauth_clients.json")
+
+
+def _th(tok: str) -> str:
+    """SV_MCPGATE_V015: tokens are stored only as SHA-256 (hex[:16] == UI token_hash)."""
+    return hashlib.sha256(tok.encode()).hexdigest()
+
+
+def _migrate_tokens(tokens: dict) -> dict:
+    out = {(k if v.get("hashed") else _th(k)): (v if v.get("hashed") else {**v, "hashed": True, "prefix": k[:8]})
+           for k, v in tokens.items()}
+    if any(not v.get("hashed") for v in tokens.values()):
+        _save_tokens(out)
+    return out
+
+
+def _load_clients() -> dict:
+    try:
+        with open(CLIENTS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_clients():
+    try:
+        with open(CLIENTS_FILE, "w") as f:
+            json.dump(oauth_clients, f)
+    except Exception:
+        log.warning("Failed to save MCP OAuth clients")
+
+
+access_tokens = _migrate_tokens(_load_tokens())
+oauth_clients.update(_load_clients())
 
 def _get_bearer(request: Request) -> Optional[str]:
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         return auth[7:]
-    return request.query_params.get("token")
+    return None  # SV_MCPGATE_V015: ?token= removed (leaks via access logs / Referer)
 
 def _require_mcp_auth(request: Request) -> dict:
     token = _get_bearer(request)
@@ -67,15 +105,19 @@ def _require_mcp_auth(request: Request) -> dict:
     aid = storage.verify_agent_key(token)
     if aid:
         return {"agent_id": aid, "client_id": "static", "expires": time.time() + 3600}
-    entry = access_tokens.get(token)
+    off = storage.agent_id_for_key(token)  # SV_MCPGATE_OPS p4
+    if off:
+        log.warning(f"MCP request blocked: agent '{off}' is disabled or its grant expired")
+        raise HTTPException(403, f"Agent '{off}' is disabled or its grant expired")
+    entry = access_tokens.get(_th(token))
     if not entry or entry.get("expires", 0) < time.time():
-        access_tokens.pop(token, None)
+        access_tokens.pop(_th(token), None)
         raise HTTPException(401, "Invalid or expired token")
     # ── Check agent is still enabled (toggle OFF = instant block) ──
     agent_id = entry.get("agent_id", "")
     if agent_id:
         agent = storage.get_agent(agent_id)
-        if not agent or not agent.get("enabled", True):
+        if not storage.agent_active(agent):  # SV_MCPGATE_OPS
             log.warning(f"MCP request blocked: agent '{agent_id}' is disabled")
             raise HTTPException(403, f"Agent '{agent_id}' is disabled")
     return entry
@@ -114,16 +156,10 @@ def _build_capabilities_summary(agent_id: str) -> str:
                 continue
             if cs.get("type", "allow") != "allow":
                 continue
-            cmds = cs.get("commands", [])
-            # Show first 3 commands as examples
-            examples = [c["cmd"] for c in cmds[:3]]
-            suffix = f" (+{len(cmds)-3} more)" if len(cmds) > 3 else ""
-            cs_summaries.append(f"  {sid}: {', '.join(examples)}{suffix}")
+            cs_summaries.append(sid)  # SV_MCPGATE_V015: ids only — details via list_capabilities
 
         if cs_summaries:
-            mode = h.get("approval_mode", "pessimistic")
-            lines.append(f"Host '{h['id']}' (mode={mode}):")
-            lines.extend(cs_summaries)
+            lines.append(f"{h['id']}: {', '.join(cs_summaries)}")
 
     return "\n".join(lines) if lines else "No hosts available."
 
@@ -185,7 +221,8 @@ def _build_tools(agent_id: str) -> list:
                 "Use this to deploy scripts before executing them with exec_command. "
                 "Sandbox path is per-host config (default: /tmp/mcp-sandbox). "
                 "Filenames: alphanumeric + ._- only, max 100 chars. "
-                "Content limit: 100KB. Scripts (.sh, .py) are auto-chmod +x."
+                "Content limit: 100KB. Scripts (.sh, .py) are auto-chmod +x. "
+                "May require operator approval — the operator sees the full content."
             ),
             "inputSchema": {
                 "type": "object",
@@ -235,35 +272,75 @@ _start_time = time.time()
 def list_tokens_safe() -> list[dict]:
     """Return token list with sensitive values masked. Safe for API responses."""
     now = time.time()
-    result = []
-    for tok, entry in access_tokens.items():
-        result.append({
-            "token_prefix": tok[:8] + "...",
-            "token_hash": __import__("hashlib").sha256(tok.encode()).hexdigest()[:16],
-            "agent_id": entry.get("agent_id", ""),
-            "expires": entry.get("expires", 0),
-            "expires_in_days": max(0, int((entry.get("expires", 0) - now) / 86400)),
-            "active": entry.get("expires", 0) > now,
-        })
+    result = [{
+        "token_prefix": e.get("prefix", "????????") + "...",
+        "token_hash": th[:16],
+        "agent_id": e.get("agent_id", ""),
+        "expires": e.get("expires", 0),
+        "expires_in_days": max(0, int((e.get("expires", 0) - now) / 86400)),
+        "active": e.get("expires", 0) > now,
+    } for th, e in access_tokens.items()]
     return sorted(result, key=lambda x: x["expires"], reverse=True)
 
 
 def revoke_token_by_hash(token_hash: str) -> bool:
     """Revoke token by its SHA-256 prefix (first 16 hex chars). Returns True if found."""
-    import hashlib
-    for tok in list(access_tokens.keys()):
-        if hashlib.sha256(tok.encode()).hexdigest()[:16] == token_hash:
-            del access_tokens[tok]
+    for th in list(access_tokens):
+        if th[:16] == token_hash:
+            del access_tokens[th]
             _save_tokens(access_tokens)
             log.info(f"Token revoked: hash={token_hash}")
             return True
     return False
 
+
+def _fmt_result(r: dict, suffix: str = "") -> str:
+    if "exit_code" not in r:
+        return f"Error: {r.get('error', 'execution failed (no exit_code)')}" + suffix
+    text = f"exit_code={r['exit_code']}" + suffix
+    out = (r.get("output") or "").strip()
+    err = (r.get("stderr") or "").strip()
+    if out:
+        text += f"\n{out}"
+    if err:
+        text += f"\nSTDERR:\n{err}"
+    if r.get("error"):
+        text += f"\nERROR: {r['error']}"
+    return text
+
+
+async def _wait_result(aid: str, mode: str, expires_at) -> str:
+    """SV_MCPGATE_V015: wait for operator/timeout and READ the stored result.
+    Never executes — main.api_approve / tasks.approval_loop run the item exactly once."""
+    poll_max = min(120, int(expires_at - time.time())) if expires_at else 120
+    ev = app_state.create_approval_event(aid)
+    item = storage.get_queue_item(aid)
+    if item and item.get("status") == "pending":
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=float(max(1, poll_max)))
+        except asyncio.TimeoutError:
+            pass
+    app_state.approval_events.pop(aid, None)
+    item = storage.get_queue_item(aid) or {}
+    st = item.get("status", "unknown")
+    if st == "approved":
+        if "result" in item:
+            auto = " (auto-approved, optimistic)" if item.get("auto_resolved") == "timeout_approve" else ""
+            return _fmt_result(item["result"], auto)
+        return f"Approved, still executing (approval_id={aid}) — result will be in audit."
+    if st == "rejected":
+        why = "expired without approval" if item.get("auto_resolved") == "timeout_reject" else "rejected by operator"
+        return f"Rejected: {why} (mode={mode}, approval_id={aid})"
+    if st == "pending":
+        return f"Pending approval (mode={mode}, approval_id={aid}). Approve via WebUI."
+    return f"Approval status: {st} (approval_id={aid})"
+
+
 async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
     agent = storage.get_agent(agent_id) if agent_id else None
     # ── Reject if agent is disabled ──
-    if agent and not agent.get("enabled", True):
-        return f"Error: agent '{agent_id}' is disabled."
+    if agent and not storage.agent_active(agent):  # SV_MCPGATE_OPS
+        return f"Error: agent '{agent_id}' is disabled or its grant expired."
     allowed_hosts = agent.get("allowed_hosts", []) if agent else []
 
     if name == "list_hosts":
@@ -325,69 +402,12 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
         elif action == "dry_run":
             return f"Dry run: would execute '{result['would_execute']}' (mode: {result['mode']})"
         elif action == "pending":
-            aid = result["approval_id"]
-            mode = result["approval_mode"]
-            poll_max = (min(120, int(result["expires_at"] - time.time()))
-                        if result.get("expires_at") else 120)
-
-            # Event-based wait: woken immediately by tasks.approval_loop or routes_admin.
-            # Replaces 2s polling loop that held the MCP connection for up to 120s.
-            ev = app_state.create_approval_event(aid)
-
-            # Guard: check if already resolved before blocking (tasks may have run)
-            item = storage.get_queue_item(aid)
-            if item and item.get("status") == "pending":
-                try:
-                    await asyncio.wait_for(ev.wait(), timeout=float(poll_max))
-                except asyncio.TimeoutError:
-                    pass
-            # Cleanup event regardless of outcome
-            app_state.approval_events.pop(aid, None)
-
-            async def _exec_approved(resolved_cmd: str, suffix: str = "") -> str:
-                try:
-                    r = await asyncio.to_thread(executor.execute_with_secrets, h, resolved_cmd)
-                except ValueError as ve:
-                    return f"Error during execution: {ve}"
-                entry = {"host_id": host_id, "command": command,
-                         "resolved": resolved_cmd,
-                         "source": agent_id or "mcp-transport",
-                         "agent_id": agent_id, **r}
-                storage.append_audit(entry)
-                text = f"exit_code={r['exit_code']}" + suffix
-                out = r.get("output", "").strip()
-                err = r.get("stderr", "").strip()
-                if out: text += f"\n{out}"
-                if err: text += f"\nSTDERR:\n{err}"
-                return text
-
-            item = storage.get_queue_item(aid)
-            if not item:
-                return f"Approval status unknown (approval_id={aid})"
-
-            st = item.get("status", "pending")
-            resolved_cmd = item.get("resolved", command)
-
-            if st == "approved":
-                return await _exec_approved(resolved_cmd)
-            elif st == "rejected":
-                return f"Rejected by operator (approval_id={aid})"
-            elif st == "timeout_approve":
-                storage.update_queue_status(aid, "approved")
-                return await _exec_approved(resolved_cmd, " (auto-approved, optimistic)")
-            elif st == "timeout_reject":
-                return f"Expired without approval (mode={mode}, approval_id={aid})"
-            elif st == "pending":
-                # Still pending after wait (strict mode or very long timeout)
-                if mode == "optimistic":
-                    storage.update_queue_status(aid, "approved")
-                    return await _exec_approved(resolved_cmd, " (auto-approved, optimistic timeout)")
-                else:
-                    return f"Pending approval (mode={mode}, approval_id={aid}). Approve via WebUI."
-            else:
-                return f"Approval status: {st} (approval_id={aid})"
+            # SV_MCPGATE_V015: the resolver executes once and stores the result; we only read it
+            return await _wait_result(result["approval_id"], result["approval_mode"], result.get("expires_at"))
         elif action == "executed":
             r = result["result"]
+            if "exit_code" not in r:
+                return f"Error: {r.get('error', 'execution failed (no exit_code)')}"
             text = f"exit_code={r['exit_code']}"
             out = r.get("output", "").strip()
             err = r.get("stderr", "").strip()
@@ -397,9 +417,11 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
                 text += f"\nSTDERR:\n{err}"
             return text
         else:
-            return f"Error: {r.get('error', 'unknown')}"
+            return f"Error: unexpected executor action '{action}'"
 
     elif name == "write_sandbox_file":
+        # SV_MCPGATE_V015: single branch; write is a whitelisted, approvable action
+        # (cmd 'write_sandbox_file') — the operator sees the full content before it lands.
         host_id = args.get("host_id", "")
         filename = args.get("filename", "")
         content = args.get("content", "")
@@ -414,82 +436,44 @@ async def _exec_tool(name: str, args: dict, agent_id: str) -> str:
             return f"Error: host '{host_id}' is disabled."
         if allowed_hosts and host_id not in allowed_hosts:
             return f"Error: agent '{agent_id}' not allowed on host '{host_id}'."
-
-        sandbox_dir = h.get("sandbox_path", "").strip() or "/tmp/mcp-sandbox"
-
-        result = await asyncio.to_thread(
-            ssh_client.write_sandbox_file, h, filename, content, sandbox_dir
-        )
-
-        # Audit
-        entry = {
-            "host_id": host_id,
-            "command": f"write_sandbox_file: {filename}",
-            "source": agent_id or "mcp-transport",
-            "agent_id": agent_id,
-            "status": "ok" if result.get("ok") else "error",
-            "output": f"{result.get('path', '')} ({result.get('bytes', 0)} bytes)"
-                      if result.get("ok") else result.get("error", ""),
-            "exit_code": 0 if result.get("ok") else 1,
-            "duration_ms": result.get("duration_ms", 0),
-        }
-        storage.append_audit(entry)
+        src = agent_id or "mcp-transport"
+        ok, reason = storage.check_command_authorized(h, agent, "write_sandbox_file")
+        if not ok:
+            storage.append_audit({"host_id": host_id, "command": f"write_sandbox_file: {filename}",
+                                  "source": src, "agent_id": agent_id, "status": "blocked", "reason": reason})
+            return f"Error: write_sandbox_file not allowed on '{host_id}': {reason}"
+        sha = hashlib.sha256(content.encode()).hexdigest()
+        item = {"kind": "write_sandbox", "host_id": host_id, "command": "write_sandbox_file",
+                "resolved": f"write_sandbox_file {filename} ({len(content.encode())} B, sha256={sha[:16]})",
+                "filename": filename, "payload": content, "sha256": sha, "source": src, "agent_id": agent_id,
+                "sandbox_dir": h.get("sandbox_path", "").strip() or "/tmp/mcp-sandbox"}
+        if h.get("dry_run"):
+            return f"Dry run: would {item['resolved']}"
+        mode = executor.get_approval_mode(h, storage.find_whitelist_entry(h, "write_sandbox_file") or {})
+        if mode == "auto":
+            r = await asyncio.to_thread(executor.run_queued, item)
+            entry = {"host_id": host_id, "command": item["resolved"], "source": src,
+                     "agent_id": agent_id, "sha256": sha, **r}
+            storage.append_audit(entry)
+            if _bcast_fn:
+                try:
+                    await _bcast_fn(entry)
+                except Exception:
+                    pass
+            return _fmt_result(r)
+        timeout = h.get("approval_timeout", 300)
+        item.update(approval_mode=mode, timeout=timeout if mode != "strict" else 0)
+        aid = storage.add_to_queue(item)
         if _bcast_fn:
             try:
-                await _bcast_fn(entry)
+                await _bcast_fn({"host_id": host_id, "command": item["resolved"], "source": src,
+                                 "agent_id": agent_id, "status": "pending", "approval_id": aid,
+                                 "approval_mode": mode, "created_at": time.time()})
             except Exception:
                 pass
-
-        if result.get("ok"):
-            return f"OK: {result['path']} ({result['bytes']} bytes, {result.get('duration_ms', 0)}ms)"
-        else:
-            return f"Error: {result.get('error', 'unknown')}"
-
-    elif name == "write_sandbox_file":
-        host_id = args.get("host_id", "")
-        filename = args.get("filename", "")
-        content = args.get("content", "")
-        if not host_id or not filename:
-            return "Error: host_id and filename are required."
-        if not content:
-            return "Error: content is required (empty file not allowed)."
-        h = storage.get_host(host_id)
-        if not h:
-            return f"Error: host '{host_id}' not found."
-        if not h.get("enabled", True):
-            return f"Error: host '{host_id}' is disabled."
-        if allowed_hosts and host_id not in allowed_hosts:
-            return f"Error: agent '{agent_id}' not allowed on host '{host_id}'."
-
-        sandbox_dir = h.get("sandbox_path", "").strip() or "/tmp/mcp-sandbox"
-
-        result = await asyncio.to_thread(
-            ssh_client.write_sandbox_file, h, filename, content, sandbox_dir
-        )
-
-        # Audit
-        entry = {
-            "host_id": host_id,
-            "command": f"write_sandbox_file: {filename}",
-            "source": agent_id or "mcp-transport",
-            "agent_id": agent_id,
-            "status": "ok" if result.get("ok") else "error",
-            "output": f"{result.get('path', '')} ({result.get('bytes', 0)} bytes)"
-                      if result.get("ok") else result.get("error", ""),
-            "exit_code": 0 if result.get("ok") else 1,
-            "duration_ms": result.get("duration_ms", 0),
-        }
-        storage.append_audit(entry)
-        if _bcast_fn:
-            try:
-                await _bcast_fn(entry)
-            except Exception:
-                pass
-
-        if result.get("ok"):
-            return f"OK: {result['path']} ({result['bytes']} bytes, {result.get('duration_ms', 0)}ms)"
-        else:
-            return f"Error: {result.get('error', 'unknown')}"
+        await notifications.notify("approval", f"Pending\n{host_id}: <code>{_esc(item['resolved'])}</code>\n"
+                                               f"Mode: {mode}\n<pre>{_esc(content[:2500])}</pre>")
+        return await _wait_result(aid, mode, time.time() + timeout if mode != "strict" else None)
 
     elif name == "server_health":
         hosts = storage.load_hosts()
@@ -698,7 +682,13 @@ async def oauth_register(request: Request):
     body = await request.json()
     cid = secrets.token_urlsafe(16)
     cs = secrets.token_urlsafe(32)
-    oauth_clients[cid] = {"secret": cs, "redirect_uris": body.get("redirect_uris", [])}
+    uris = [u for u in body.get("redirect_uris", []) if isinstance(u, str)]
+    bad = [u for u in uris if not (urlparse(u).scheme == "https"
+                                   or urlparse(u).hostname in ("localhost", "127.0.0.1"))]
+    if not uris or bad:
+        return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400)
+    oauth_clients[cid] = {"secret": cs, "redirect_uris": uris}  # SV_MCPGATE_V015: persisted
+    _save_clients()
     return JSONResponse({"client_id": cid, "client_secret": cs,
         "redirect_uris": body.get("redirect_uris", []),
         "grant_types": ["authorization_code"], "response_types": ["code"]}, status_code=201)
@@ -715,6 +705,14 @@ async def oauth_authorize(
     bg = appear.get("bg_color", "#0f1117")
     text_c = appear.get("text_color", "#e0e0e0")
     card = appear.get("card_bg", "rgba(26,29,39,0.7)")
+
+    # Escape reflected query params before embedding in HTML form fields.
+    # This page also collects the MCP_TOKEN, so HTML injection here is high-risk.
+    import html as _html
+    client_id = _html.escape(client_id, quote=True)
+    redirect_uri = _html.escape(redirect_uri, quote=True)
+    state = _html.escape(state, quote=True)
+    code_challenge = _html.escape(code_challenge, quote=True)
 
     agents = storage.load_agents()
     mcp_agents = [a for a in agents if a.get("enabled", True)]
@@ -768,7 +766,7 @@ async def oauth_approve(
     state: str = Form(""), code_challenge: str = Form(""),
     token: str = Form(...), agent_id: str = Form(...),
 ):
-    if not MCP_TOKEN or token != MCP_TOKEN:
+    if not MCP_TOKEN or not hmac.compare_digest(token.encode(), MCP_TOKEN.encode()):
         return HTMLResponse(
             '<div style="font-family:system-ui;color:#ef4444;padding:40px;text-align:center">'
             '<h2>\u274c Invalid MCP token</h2><p><a href="javascript:history.back()" style="color:#818cf8">Try again</a></p></div>',
@@ -780,8 +778,13 @@ async def oauth_approve(
             status_code=400)
     agent = storage.get_agent(agent_id)
     if not agent:
-        return HTMLResponse(f'<h2 style="color:#ef4444;font-family:system-ui">\u274c Agent not found: {agent_id}</h2>', status_code=404)
+        return HTMLResponse(f'<h2 style="color:#ef4444;font-family:system-ui">\u274c Agent not found</h2>', status_code=404)
 
+    # SV_MCPGATE_V015: redirect_uri must be registered by this client (blocks code theft)
+    cl = oauth_clients.get(client_id)
+    if not cl or redirect_uri not in cl.get("redirect_uris", []):
+        return HTMLResponse('<h2 style="color:#ef4444;font-family:system-ui">Unknown client or '
+                            'unregistered redirect_uri: remove and re-add the connector</h2>', status_code=400)
     code = secrets.token_urlsafe(32)
     auth_codes[code] = {
         "client_id": client_id, "redirect_uri": redirect_uri,
@@ -789,7 +792,7 @@ async def oauth_approve(
         "expires": time.time() + 300,
     }
     sep = "&" if "?" in redirect_uri else "?"
-    url = f"{redirect_uri}{sep}code={code}" + (f"&state={state}" if state else "")
+    url = f"{redirect_uri}{sep}" + urlencode({"code": code, **({"state": state} if state else {})})
     log.info(f"MCP OAuth approved for agent '{agent_id}' client '{client_id}'")
     return RedirectResponse(url, status_code=302)
 
@@ -802,8 +805,17 @@ async def oauth_token(request: Request):
     entry = auth_codes.pop(body.get("code", ""), None)
     if not entry or entry["expires"] < time.time():
         return JSONResponse({"error": "invalid_grant"}, status_code=400)
+    # SV_MCPGATE_V015: bind code to client_id + redirect_uri, enforce PKCE S256
+    if (body.get("client_id") or entry["client_id"]) != entry["client_id"] or \
+            (body.get("redirect_uri") or entry["redirect_uri"]) != entry["redirect_uri"]:
+        return JSONResponse({"error": "invalid_grant"}, status_code=400)
+    verifier = body.get("code_verifier", "")
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    if not verifier or not entry.get("code_challenge") or \
+            not hmac.compare_digest(challenge, entry["code_challenge"]):
+        return JSONResponse({"error": "invalid_grant", "error_description": "PKCE check failed"}, status_code=400)
     tok = secrets.token_urlsafe(48)
-    access_tokens[tok] = {
+    access_tokens[_th(tok)] = {"hashed": True, "prefix": tok[:8],
         "client_id": entry["client_id"],
         "agent_id": entry["agent_id"],
         "expires": time.time() + 86400 * 90,

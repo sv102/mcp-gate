@@ -3,7 +3,7 @@
 # https://github.com/sv102/mcp-gate
 """models.py — Pydantic models for MCP Gate API."""
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ExecReq(BaseModel):
@@ -20,6 +20,8 @@ class HostM(BaseModel):
     rate_limit: int = 10; exec_delay: float = 0; max_output_lines: int = 200; ssh_timeout: int = 30
     command_sets: list[str] = []; whitelist: list[dict] = []; description: str = ""
     sandbox_path: str = ""
+    # SV_MCPGATE_PLATFORM_2026_09_30
+    platform: str = "auto"  # auto | busybox | openwrt | bsd
 
     @field_validator("key_path")
     @classmethod
@@ -43,6 +45,7 @@ class AgentM(BaseModel):
     id: str; name: str = ""; agent_type: str = "custom"; icon: str = ""
     enabled: bool = True; description: str = ""; rate_limit: int = 60
     allowed_hosts: list[str] = []; command_sets: list[str] = []; api_key: str = ""
+    auto_off_min: int = Field(0, ge=0, le=1440)  # SV_MCPGATE_OPS: >0 -> toggle ON = timed grant, auto-off
 
 
 class CmdSetM(BaseModel):

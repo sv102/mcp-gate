@@ -258,7 +258,7 @@ async def sandbox_clear(hid: str):
 
 @router.get("/api/admin/agents")
 async def admin_agents():
-    return storage.load_agents()
+    return [storage.public_agent(a) for a in storage.load_agents()]  # SV_MCPGATE_016
 
 
 @router.post("/api/admin/agents")
@@ -283,6 +283,9 @@ async def up_agent(aid: str, a: AgentM):
         raise HTTPException(400)
     old = storage.get_agent(aid)
     d = a.model_dump()
+    if old and "auto_off_min" not in a.model_fields_set:  # SV_MCPGATE_OPS
+        d["auto_off_min"] = old.get("auto_off_min", 0)
+    d["enabled_until"] = (old or {}).get("enabled_until", 0) if int(d.get("auto_off_min") or 0) > 0 else 0
     raw_key = d.pop("api_key", "")
     d["created_at"] = old.get("created_at", time.time()) if old else time.time()
     d["updated_at"] = time.time()
@@ -291,6 +294,7 @@ async def up_agent(aid: str, a: AgentM):
     elif old and old.get("encrypted_api_key"):
         d["encrypted_api_key"] = old["encrypted_api_key"]
     storage.upsert_agent(d)
+    storage.invalidate_agent_key_cache()  # SV_MCPGATE_016
     storage.append_audit({"command": f"update agent: {aid}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "updated", "id": aid}
 
@@ -311,9 +315,16 @@ async def toggle_agent(aid: str):
     if not a:
         raise HTTPException(404)
     a["enabled"] = not a.get("enabled", True)
+    ttl = int(a.get("auto_off_min") or 0)  # SV_MCPGATE_OPS: timed grant
+    a["enabled_until"] = time.time() + ttl * 60 if (a["enabled"] and ttl > 0) else 0
     storage.upsert_agent(a)
-    storage.append_audit({"command": f"toggle agent: {aid}", "source": "admin", "status": "ok", "host_id": "-"})
-    return {"status": "toggled", "enabled": a["enabled"]}
+    note = f" grant {ttl}m" if a["enabled_until"] else ""
+    storage.append_audit({"command": f"toggle agent: {aid} -> {'on' if a['enabled'] else 'off'}{note}",
+                          "source": "admin", "status": "ok", "host_id": "-"})
+    if ttl > 0:
+        await notifications.notify("ops", f"{'🔓' if a['enabled'] else '🔒'} mcp-gate ops <b>{aid}</b> "
+                                          f"{'ON на ' + str(ttl) + ' мин' if a['enabled'] else 'OFF вручную'}")
+    return {"status": "toggled", "enabled": a["enabled"], "enabled_until": a["enabled_until"]}
 
 
 @router.post("/api/admin/agents/{aid}/duplicate")
@@ -341,6 +352,8 @@ async def gen_agent_key(aid: str):
     a["encrypted_api_key"] = storage.encrypt_agent_key(raw)
     a["updated_at"] = time.time()
     storage.upsert_agent(a)
+    storage.invalidate_agent_key_cache()  # SV_MCPGATE_016
+    storage.append_audit({"command": f"regenerate key: {aid}", "source": "admin", "status": "ok", "host_id": "-"})
     return {"status": "ok", "api_key": raw, "warning": "Save this key now."}
 
 
@@ -350,6 +363,7 @@ async def reveal_agent_key(aid: str):
     key = storage.decrypt_agent_key(aid)
     if key is None:
         return {"ok": False, "message": "No key set or decrypt failed"}
+    storage.append_audit({"command": f"reveal key: {aid}", "source": "admin", "status": "ok", "host_id": "-"})  # SV_MCPGATE_016
     return {"ok": True, "api_key": key}
 
 

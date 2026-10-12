@@ -31,7 +31,7 @@ _TYPE_MAP = {
 
 def _check_cooldown(channel: str, event_type: str, cooldown_seconds: int) -> bool:
     """Returns True if OK to send (not in cooldown). Updates last_sent on True."""
-    if event_type == "approval":
+    if event_type in ("approval", "ops"):  # SV_MCPGATE_OPS
         # Approvals are always sent (no cooldown — operator needs to act)
         return True
     key = f"{channel}:{event_type}"
@@ -100,7 +100,7 @@ async def notify(event_type: str, text: str) -> dict:
     if tg_cfg.get("enabled", False):
         if not setting or tg_cfg.get(setting, True):
             cooldown = tg_cfg.get("cooldown_seconds", 300)
-            if _check_cooldown("telegram", event_type, cooldown):
+            if event_type == "approval" or _check_cooldown("telegram", event_type, cooldown):  # SV_MCPGATE_V015
                 results["telegram"] = await send_telegram(text)
             else:
                 results["telegram"] = {"skipped": "cooldown"}
@@ -110,7 +110,7 @@ async def notify(event_type: str, text: str) -> dict:
     if smtp_cfg.get("enabled", False):
         if not setting or smtp_cfg.get(setting, True):
             cooldown = smtp_cfg.get("cooldown_seconds", 300)
-            if _check_cooldown("smtp", event_type, cooldown):
+            if event_type == "approval" or _check_cooldown("smtp", event_type, cooldown):
                 subject = f"MCP Gate: {event_type}"
                 plain = (text.replace("<b>", "").replace("</b>", "")
                          .replace("<code>", "").replace("</code>", ""))

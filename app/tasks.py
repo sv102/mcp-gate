@@ -36,6 +36,8 @@ async def approval_loop():
                         # Re-check authorization (whitelist may have changed since queuing)
                         _agent = storage.get_agent(it.get("agent_id")) if it.get("agent_id") else None
                         _ok, _reason = storage.check_command_authorized(h, _agent, it["command"])
+                        if _ok and it.get("agent_id") not in (None, "", "__global__") and not storage.agent_active(_agent):  # SV_MCPGATE_016
+                            _ok, _reason = False, "agent inactive (disabled or grant expired)"
                         if not _ok:
                             e = {"host_id": it["host_id"], "command": it["command"],
                                  "source": "auto_approve_denied", "approval_id": aid,
@@ -49,12 +51,11 @@ async def approval_loop():
                         d = h.get("exec_delay", 0)
                         if d > 0:
                             await asyncio.sleep(d)
-                        r = await asyncio.to_thread(
-                            executor.execute_with_secrets, h, it.get("resolved", it["command"])
-                        )
+                        r = await asyncio.to_thread(executor.run_queued, it)  # SV_MCPGATE_V015
                         e = {"host_id": it["host_id"], "command": it["command"],
                              "source": "auto_approve", "approval_id": aid, **r}
                         storage.update_queue_status(aid, "approved")
+                        storage.set_queue_result(aid, r)
                         storage.append_audit(e)
                         await app_state.ws_broadcast(e)
 
@@ -72,6 +73,30 @@ async def approval_loop():
         except Exception as x:
             log.error(f"approval: {x}")
         await asyncio.sleep(5)
+
+
+async def ops_expiry_loop():  # SV_MCPGATE_OPS
+    """Revoke timed grants: agents with auto_off_min>0 whose grant expired or is missing."""
+    import notifications
+    await asyncio.sleep(5)
+    while True:
+        try:
+            now = time.time()
+            for a in storage.load_agents():
+                if not a.get("enabled", True) or int(a.get("auto_off_min") or 0) <= 0:
+                    continue
+                u = a.get("enabled_until") or 0
+                if u and now <= u:
+                    continue
+                a["enabled"], a["enabled_until"] = False, 0
+                storage.upsert_agent(a)
+                storage.invalidate_agent_key_cache()
+                storage.append_audit({"command": f"ops grant expired: {a['id']}", "source": "ops",
+                                      "status": "ok", "host_id": "-"})
+                await notifications.notify("ops", f"🔒 mcp-gate ops <b>{a['id']}</b> выключен по таймеру")
+        except Exception as x:
+            log.error(f"ops_expiry: {x}")
+        await asyncio.sleep(15)
 
 
 async def trim_loop():

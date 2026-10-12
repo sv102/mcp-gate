@@ -157,6 +157,19 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
           <div class="form-row"><label>Max Output Lines</label><input type="number" x-model.number="f.max_output_lines"></div>
           <div class="form-row"><label>Exec Delay (sec)</label><input type="number" step="0.1" x-model.number="f.exec_delay"></div>
           <div class="form-row"><label>Sandbox Path</label><input x-model="f.sandbox_path" placeholder="/tmp/mcp-sandbox"></div>
+          <!-- SV_MCPGATE_PLATFORM_2026_09_30 -->
+          <div class="form-row"><label>Platform</label>
+            <select x-model="f.platform">
+              <option value="auto">Linux (glibc, useradd, sudo)</option>
+              <option value="busybox">BusyBox (adduser, ash)</option>
+              <option value="openwrt">OpenWrt (BusyBox, без sudo, часто без SFTP)</option>
+              <option value="bsd">BSD (pw useradd, doas)</option>
+            </select>
+          </div>
+          <div class="form-row" x-show="f.sandbox_path && f.platform==='openwrt'" style="color:#f59e0b;font-size:12px">
+            ⚠️ На OpenWrt dropbear обычно без SFTP-подсистемы — загрузка файлов в sandbox
+            завершится ошибкой «EOF during negotiation». Используйте явный whitelist команд.
+          </div>
           <div class="form-row">
             <label data-tip="SSH key used for this host.&#10;Default key is used if not specified." data-tip-down>SSH Key</label>
             <select x-model="f.key_path">
@@ -394,7 +407,7 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
 {% endblock %}
 {% block scripts %}<script>
 function hostsApp(){
-  const D={id:'',name:'',hostname:'',port:22,user:'mcp-reader',group:'',enabled:true,dry_run:false,approval_mode:'pessimistic',approval_timeout:300,rate_limit:10,exec_delay:0,max_output_lines:200,ssh_timeout:30,command_sets:[],whitelist:[],description:'',sandbox_path:'',key_path:'/data/ssh_keys/mcp_ed25519'};
+  const D={id:'',name:'',hostname:'',port:22,user:'mcp-reader',group:'',enabled:true,dry_run:false,approval_mode:'pessimistic',approval_timeout:300,rate_limit:10,exec_delay:0,max_output_lines:200,ssh_timeout:30,command_sets:[],whitelist:[],description:'',sandbox_path:'',platform:'auto',key_path:'/data/ssh_keys/mcp_ed25519'};
   return{
     hosts:[],sets:[],sshKeys:[],showAdd:false,editing:false,f:{...D},detailHost:null,detailWl:[],pubKey:'',hostStatus:{},setupTab:'quick',
     showImport:false,importJson:'',importTitle:'Hosts',importHint:'Paste JSON or upload .json file — single host or array.',
@@ -426,7 +439,7 @@ function hostsApp(){
       this.pollStatus();this._statusTimer=setInterval(()=>this.pollStatus(),30000)
     },
     reset(){this.f=JSON.parse(JSON.stringify(D))},
-    edit(h){this.f=JSON.parse(JSON.stringify(h));this.f.command_sets=this.f.command_sets||[];this.f.sandbox_path=this.f.sandbox_path||'';this.f.key_path=this.f.key_path||'/data/ssh_keys/mcp_ed25519';this.editing=true;this.showAdd=true},
+    edit(h){this.f=JSON.parse(JSON.stringify(h));this.f.command_sets=this.f.command_sets||[];this.f.sandbox_path=this.f.sandbox_path||'';this.f.platform=this.f.platform||'auto';this.f.key_path=this.f.key_path||'/data/ssh_keys/mcp_ed25519';this.editing=true;this.showAdd=true},
     async save(){
       try{const m=this.editing?'PUT':'POST';await api(m,(this.editing?'/api/admin/hosts/'+this.f.id:'/api/admin/hosts'),this.f);
         toast('Saved',3000,'ok');const wasNew=!this.editing;const savedId=this.f.id;this.showAdd=false;this.editing=false;this.reset();this.hosts=await api('GET','/api/admin/hosts');if(wasNew){const nh=this.hosts.find(h=>h.id===savedId);if(nh){this.setupTab='quick';this.openDetail(nh)}}}catch(e){toast(e.message,5000,'err')}},
@@ -475,20 +488,56 @@ function hostsApp(){
       for(const sid of(h.command_sets||[])){const s=this.sets.find(x=>x.id===sid);if(!s||s.type==='deny'||s.enabled===false)continue;add(s.commands)}
       add(h.whitelist);return sudo;
     },
+    // SV_MCPGATE_PLATFORM_2026_09_30 — профиль платформы целевого хоста
+    PF(h){
+      const u=h.user||'mcp-reader';
+      const home=`/home/${u}`;
+      const byId=`chown -R "$(awk -F: '$1=="${u}"{print $3":"$4}' /etc/passwd)" ${home}/.ssh`;
+      const P={
+        auto:{sh:'/bin/bash',home:home,sftp:true,priv:'sudo',
+          mk:`useradd -m -s /bin/bash ${u} 2>/dev/null || echo "User ${u} exists — OK"`,
+          own:`chown -R ${u}:${u} ${home}/.ssh`,keep:''},
+        busybox:{sh:'/bin/ash',home:home,sftp:true,priv:'none',
+          mk:`adduser -D -h ${home} -s /bin/ash ${u} 2>/dev/null || echo "User ${u} exists — OK"`,
+          own:byId,keep:''},
+        openwrt:{sh:'/bin/ash',home:home,sftp:false,priv:'none',
+          mk:`if grep -q "^${u}:" /etc/passwd 2>/dev/null; then
+  echo "User ${u} exists — OK"
+elif command -v adduser >/dev/null 2>&1; then
+  adduser -D -h ${home} -s /bin/ash ${u}
+else
+  # минимальная сборка: ни adduser, ни opkg — правим базы вручную
+  NEWID=1000
+  while cut -d: -f3 /etc/passwd | grep -qx "$NEWID"; do NEWID=$((NEWID+1)); done
+  mkdir -p ${home}
+  echo "${u}:x:$NEWID:$NEWID:${u}:${home}:/bin/ash" >> /etc/passwd
+  echo "${u}:x:$NEWID:" >> /etc/group
+  echo "${u}:!:0:0:99999:7:::" >> /etc/shadow
+  echo "User ${u} created manually (UID $NEWID)"
+fi`,
+          own:byId,
+          keep:`# /home не сохраняется при sysupgrade — внести ключ в список переносимого
+grep -qxF '${home}/.ssh/authorized_keys' /etc/sysupgrade.conf 2>/dev/null || echo '${home}/.ssh/authorized_keys' >> /etc/sysupgrade.conf`},
+        bsd:{sh:'/bin/sh',home:home,sftp:true,priv:'doas',
+          mk:`pw useradd ${u} -m -s /bin/sh 2>/dev/null || echo "User ${u} exists — OK"`,
+          own:`chown -R ${u}:${u} ${home}/.ssh`,keep:''}
+      };
+      return P[h.platform||'auto']||P.auto;
+    },
     genStep1(h){
-      const user=h.user||'mcp-reader';
-      return `useradd -m -s /bin/bash ${user} 2>/dev/null || echo "User ${user} exists — OK"`;
+      return this.PF(h).mk;
     },
     genStep2(h){
       const user=h.user||'mcp-reader';
       const pk=this.pubKey||'SSH_PUBLIC_KEY_NOT_LOADED';
-      return `mkdir -p /home/${user}/.ssh
-cat > /home/${user}/.ssh/authorized_keys << 'PUBKEY'
+      const pf=this.PF(h);
+      return `mkdir -p ${pf.home}/.ssh
+cat > ${pf.home}/.ssh/authorized_keys << 'PUBKEY'
 ${pk}
 PUBKEY
-chmod 700 /home/${user}/.ssh
-chmod 600 /home/${user}/.ssh/authorized_keys
-chown -R ${user}:${user} /home/${user}/.ssh`;
+chmod 700 ${pf.home}/.ssh
+chmod 600 ${pf.home}/.ssh/authorized_keys
+${pf.own}` + (pf.keep ? `\n${pf.keep}` : '');
     },
     downloadSh(h){
       let content='';
@@ -506,27 +555,41 @@ chown -R ${user}:${user} /home/${user}/.ssh`;
     genQuickSetup(h){
       const user=h.user||'mcp-reader';
       const pk=this.pubKey||'SSH_PUBLIC_KEY_NOT_LOADED';
+      const _pf=this.PF(h);
       return `# MCP Gate — Quick Setup: ${h.name||h.id}
-# Target: ${h.hostname}:${h.port}, User: ${user}
+# Target: ${h.hostname}:${h.port}, User: ${user}, Platform: ${h.platform||'auto'}${_pf.sftp?'':'\n# ВНИМАНИЕ: платформа обычно без SFTP — sandbox-загрузка работать не будет'}
 # Run as root on the target host
 # Generated: ${new Date().toISOString().slice(0,10)}
 
 # 1. Create user
-useradd -m -s /bin/bash ${user} 2>/dev/null || echo "User ${user} exists — OK"
+${this.genStep1(h)}
 
 # 2. SSH key
-mkdir -p /home/${user}/.ssh
-cat > /home/${user}/.ssh/authorized_keys << 'PUBKEY'
-${pk}
-PUBKEY
-chmod 700 /home/${user}/.ssh
-chmod 600 /home/${user}/.ssh/authorized_keys
-chown -R ${user}:${user} /home/${user}/.ssh
+${this.genStep2(h)}
 
 echo "✅ ${user}@${h.hostname} ready — run SSH Test in MCP Gate"`;
     },
     genSudoersScript(h){
       const user=h.user||'mcp-reader';
+      const _pf=this.PF(h);
+      if(_pf.priv==='none'){
+        return `# MCP Gate — ${h.name||h.id}
+# Платформа "${h.platform||'auto'}" не имеет sudo/sudoers.
+# Варианты: (1) команды, которым нужен root, выполнять вручную;
+#           (2) поставить sudo/doas пакетным менеджером платформы;
+#           (3) завести отдельный хост с user=root только под операции записи.`;
+      }
+      if(_pf.priv==='doas'){
+        const _c=this._collectSudoCmds(h);
+        const _l=_c.length?_c.map(c=>`permit nopass ${user} cmd ${c.split(' ')[0]} args ${c.split(' ').slice(1).join(' ')}`).join('\n'):'# нет команд с sudo';
+        return `# MCP Gate — doas: ${h.name||h.id}
+# Выполнить как root на ${h.hostname}
+cat > /usr/local/etc/doas.conf << 'DOAS'
+${_l}
+DOAS
+chmod 440 /usr/local/etc/doas.conf
+doas -C /usr/local/etc/doas.conf && echo "✅ doas.conf OK"`;
+      }
       const sudo=this._collectSudoCmds(h);
       const sfName=user.replace(/^mcp-/,'');
       const lines=sudo.length?sudo.map(c=>`${user} ALL=(ALL) NOPASSWD: ${c}`).join('\n'):'# No sudo commands configured';
