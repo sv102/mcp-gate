@@ -755,6 +755,8 @@ async def oauth_authorize(
     <p class="note">The MCP client will operate with this agent's permissions (allowed hosts, command sets).</p>
     <label>MCP Token</label>
     <input type="password" name="token" placeholder="Enter MCP_TOKEN from .env" required autofocus>
+    <label>2FA code</label>
+    <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456 (when 2FA is on)">
     <button type="submit">\u2705 Authorize Access</button>
   </form>
 </div></body></html>"""
@@ -764,9 +766,15 @@ async def oauth_authorize(
 async def oauth_approve(
     client_id: str = Form(...), redirect_uri: str = Form(...),
     state: str = Form(""), code_challenge: str = Form(""),
-    token: str = Form(...), agent_id: str = Form(...),
+    token: str = Form(...), agent_id: str = Form(...), code: str = Form(""),
 ):
-    if not MCP_TOKEN or not hmac.compare_digest(token.encode(), MCP_TOKEN.encode()):
+    import auth as _auth  # SV_MCPGATE_020: lockout + 2FA on the internet-facing consent page
+    ip = storage.client_ip_var.get()
+    if _auth.locked(ip):
+        return HTMLResponse('<h2 style="color:#ef4444;font-family:system-ui">Too many attempts, try later</h2>', status_code=429)
+    if not MCP_TOKEN or not hmac.compare_digest(token.encode(), MCP_TOKEN.encode()) \
+            or (_auth.totp_active() and not _auth.check_second_factor(code)):
+        _auth.failed(ip)
         return HTMLResponse(
             '<div style="font-family:system-ui;color:#ef4444;padding:40px;text-align:center">'
             '<h2>\u274c Invalid MCP token</h2><p><a href="javascript:history.back()" style="color:#818cf8">Try again</a></p></div>',

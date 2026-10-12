@@ -7,7 +7,7 @@ Handles hosts, command sets (allow/deny), secrets, agents, audit, config.
 """
 
 import json, os, re, time, uuid, hashlib
-import contextvars
+import contextvars, copy
 from pathlib import Path
 from typing import Optional
 
@@ -114,6 +114,11 @@ _fernet_cache: tuple = (0.0, None)  # (mtime, Fernet) — avoids re-reading key 
 def _get_fernet():
     global _fernet_cache
     from cryptography.fernet import Fernet
+    env = os.environ.get("MCPGATE_MASTER_KEY", "").strip()  # SV_MCPGATE_020: master key outside the data volume
+    if env:
+        if _fernet_cache[0] != -1.0:
+            _fernet_cache = (-1.0, Fernet(env.encode()))
+        return _fernet_cache[1]
     if not SECRETS_KEY_FILE.exists():
         SECRETS_KEY_FILE.write_bytes(Fernet.generate_key())
         os.chmod(SECRETS_KEY_FILE, 0o600)
@@ -312,7 +317,7 @@ def load_config() -> dict:
         save_config(cfg)
         return cfg
     cfg = _load_yaml_file(CONFIG_FILE) or {}
-    cfg = dict(cfg)  # copy so callers may mutate without corrupting the cache
+    cfg = copy.deepcopy(cfg)  # SV_MCPGATE_020: nested too (masking the Telegram token in GET used to corrupt the cache)
     cfg.setdefault("appearance", _default_appearance())
     cfg.setdefault("instance", _default_instance())
     return cfg

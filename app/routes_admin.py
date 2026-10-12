@@ -883,12 +883,15 @@ async def list_i18n():
 
 @router.get("/api/admin/instance")
 async def get_instance():
-    return storage.load_config().get("instance", storage._default_instance())
+    return {k: v for k, v in storage.load_config().get("instance", storage._default_instance()).items() if k != "admin_password_hash"}  # SV_MCPGATE_020
 
 @router.put("/api/admin/instance")
 async def put_instance(req: Request):
     c = storage.load_config()
-    c["instance"] = await req.json()
+    new = await req.json()
+    new.pop("admin_password_hash", None)  # SV_MCPGATE_020: credentials live in config.auth
+    new["auth_type"] = (c.get("instance") or {}).get("auth_type", "basic")  # changed only in config.yaml
+    c["instance"] = new
     storage.save_config(c)
     return {"status": "updated"}
 

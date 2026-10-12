@@ -22,7 +22,7 @@ import tasks
 import routes_ui
 import routes_admin
 import routes_onboarding
-import events, routes_events  # SV_MCPGATE_020
+import events, routes_events, routes_auth  # SV_MCPGATE_020
 from models import ExecReq
 
 log = logging.getLogger("mcp-gate")
@@ -58,26 +58,42 @@ _PUBLIC_PREFIXES = (
     "/metrics",  # SV_MCPGATE_020: CIDR-gated in routes_events
 )
 
+STEPUP = [  # SV_MCPGATE_020: (method, "*" = any non-GET; path regex) — need a fresh password + 2FA confirmation
+    ("POST", r"/api/admin/agents"), ("POST", r"/api/admin/agents/[^/]+/generate-key"),
+    ("*", r"/api/admin/secrets(/.*)?"), ("GET", r"/api/admin/(mcp-connection|backup)"), ("POST", r"/api/admin/restore"),
+    ("*", r"/api/admin/(ssh/(rotate|generate)|bootstrap|exec)"), ("PUT", r"/api/admin/(security|telegram|smtp)"),
+    ("DELETE", r"/api/admin/mcp-connection/sessions"),
+]
+
+
+def _needs_stepup(m: str, p: str) -> bool:
+    return any((mm == m or (mm == "*" and m not in auth.SAFE)) and re.fullmatch(rx, p) for mm, rx in STEPUP)
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    # MCP transport: POST / (JSON-RPC or Bearer)
-    if path == "/" and request.method == "POST":
+    if path == "/" and request.method == "POST":                  # MCP transport (Bearer)
         return await call_next(request)
-    # Public paths — no auth needed
     if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
         return await call_next(request)
-    # Check auth (mode-aware: none/basic/proxy)
     user = auth.check_request(request)
-    if user:
-        request.state.user = user
-        return await call_next(request)
-    # Not authenticated → API gets 401, browser gets redirect
-    if path.startswith("/api/"):
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    return RedirectResponse(f"/login?next={path}", status_code=302)
+    if not user:
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        return RedirectResponse(f"/login?next={path}", status_code=302)
+    if auth.get_auth_type() == "basic":
+        if not auth.origin_ok(request):
+            return JSONResponse({"detail": "Origin check failed"}, status_code=403)
+        if _needs_stepup(request.method, path) and (need := auth.stepup_needed(request)):
+            return JSONResponse({"detail": need[1]}, status_code=need[0])
+    request.state.user = user
+    resp = await call_next(request)
+    auth.refresh(request, resp)
+    return resp
 
 app.include_router(routes_events.router)
+app.include_router(routes_auth.router)  # SV_MCPGATE_020
 app.middleware("http")(events.middleware)  # SV_MCPGATE_020: outermost, sees the final status
 app.include_router(routes_admin.router)
 app.include_router(routes_ui.router)
@@ -88,59 +104,7 @@ mcp_transport.set_bcast(app_state.ws_broadcast)
 # ═══ Auth ═══
 
 
-@app.post("/api/auth/login")
-async def api_login(request: Request):
-    body = await request.json()
-    pw = body.get("password", "")
-    if auth.needs_setup():
-        if len(pw) < 8:
-            return JSONResponse({"error": "Password must be at least 8 characters"}, 400)
-        auth.set_password(pw)
-        storage.append_audit({"command": "admin password set (initial setup)",
-                              "source": "admin", "status": "ok", "host_id": "-"})
-        resp = JSONResponse({"status": "ok", "setup": True})
-        return auth.create_session_cookie(resp)
-    if not auth.verify_password(pw):
-        storage.append_audit({"command": "login failed",
-                              "source": "admin", "status": "blocked", "host_id": "-"})
-        return JSONResponse({"error": "Invalid password"}, 401)
-    storage.append_audit({"command": "login", "source": "admin", "status": "ok", "host_id": "-"})
-    resp = JSONResponse({"status": "ok"})
-    return auth.create_session_cookie(resp)
-
-
-@app.post("/api/auth/logout")
-async def api_logout():
-    resp = JSONResponse({"status": "ok"})
-    return auth.clear_session_cookie(resp)
-
-
-@app.get("/api/auth/status")
-async def api_auth_status(request: Request):
-    user = auth.check_request(request)
-    return {
-        "authenticated": user is not None,
-        "user": user,
-        "auth_type": auth.get_auth_type(),
-        "needs_setup": auth.needs_setup(),
-    }
-
-
-@app.post("/api/auth/change-password")
-async def api_change_pw(request: Request):
-    user = auth.check_request(request)
-    if not user:
-        return JSONResponse({"error": "Unauthorized"}, 401)
-    body = await request.json()
-    if not auth.verify_password(body.get("current_password", "")):
-        return JSONResponse({"error": "Current password incorrect"}, 403)
-    new_pw = body.get("new_password", "")
-    if len(new_pw) < 8:
-        return JSONResponse({"error": "Password must be at least 8 characters"}, 400)
-    auth.set_password(new_pw)
-    storage.append_audit({"command": "admin password changed",
-                          "source": "admin", "status": "ok", "host_id": "-"})
-    return auth.create_session_cookie(JSONResponse({"status": "ok"}))
+# auth routes: routes_auth.py  # SV_MCPGATE_020
 
 
 # ═══ Public API ═══

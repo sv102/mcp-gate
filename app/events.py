@@ -55,11 +55,14 @@ CATALOG = {
     "blocked": ("warning", True, "Command blocked", "Команда заблокирована"),
     "agent_denied": ("warning", True, "Request with invalid or inactive key", "Запрос с неверным или неактивным ключом"),
     "oauth": ("warning", True, "OAuth client", "OAuth-клиент"),
+    "security": ("critical", True, "Security settings / 2FA changed", "Изменены настройки безопасности / 2FA"),
     "system": ("info", True, "mcp-gate started", "mcp-gate запущен"),
 }
 DEFAULTS = {"enabled": True, "legacy": "fallback", "window_min": 10, "max_tries": 8, "retention_days": 30, "overrides": {}}
 # (method or "*" = any non-GET, path regex, event) — first match wins
 RULES = [
+    ("*", r"/api/admin/security", "security"),
+    ("*", r"/api/auth/(totp/(confirm|disable)|recovery/regenerate|sessions/revoke)", "security"),
     ("POST", r"/api/admin/exec", "console"),
     ("GET", r"/api/admin/agents/[^/]+/reveal-key", "key_reveal"),
     ("POST", r"/api/admin/agents/[^/]+/generate-key", "agent_key"),

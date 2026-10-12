@@ -5,6 +5,40 @@
 {% block content %}
 <h1>⚙ <span data-i18n="settings.title">Settings</span></h1>
 
+<!-- Security (SV_MCPGATE_020) -->
+<div x-data="secApp()" x-init="load()" class="card">
+  <div class="flex-between"><h2 style="margin-top:0">🔐 <span data-i18n="security.title">Security</span></h2>
+    <div class="flex" style="gap:6px">
+      <span class="badge" :class="st.totp?'badge-ok':'badge-err'" x-text="st.totp?'2FA ✓':'2FA ✗'"></span>
+      <span class="badge" :class="st.stepup_until*1000>Date.now()?'badge-ok':''" x-text="st.stepup_until*1000>Date.now()?'✓ '+new Date(st.stepup_until*1000).toLocaleTimeString():'identity not confirmed'"></span>
+    </div></div>
+  <p class="text-muted" style="font-size:12px">Admin login: password + TOTP code (Aegis, Google Authenticator…) with one-time recovery codes. Keys, secrets, backup/restore, console, SSH keys, notification channels and these settings ask for password + code once per confirmation window. Emergency 2FA reset: <code>docker exec -it mcp-gate python cli.py totp-reset</code>.</p>
+  <div class="grid-3">
+    <template x-for="d in defs" :key="d.name"><div class="form-row">
+      <label x-text="d.label"></label>
+      <template x-if="d.type==='bool'"><label><input type="checkbox" x-model="s[d.name]"> <span x-text="s[d.name]?'on':'off'"></span></label></template>
+      <template x-if="d.type!=='bool'"><input type="number" :min="d.min" :max="d.max" x-model.number="s[d.name]" style="width:120px"></template>
+    </div></template>
+  </div>
+  <div class="flex mt-4" style="flex-wrap:wrap;gap:6px">
+    <button class="btn btn-accent" @click="save()">💾 Save</button>
+    <button class="btn" @click="confirmNow()">🔐 Confirm identity</button>
+    <button class="btn" @click="enroll()" x-text="st.totp?'Re-enroll 2FA':'Enable 2FA'"></button>
+    <button class="btn" x-show="st.totp" @click="regen()">New recovery codes</button>
+    <button class="btn btn-red" x-show="st.totp" @click="disable2fa()">Disable 2FA</button>
+    <button class="btn btn-red" @click="revoke()">End all sessions</button>
+  </div>
+  <div class="text-muted" style="font-size:11px;margin-top:6px" x-show="st.totp" x-text="'Recovery codes left: '+st.recovery_left"></div>
+  <template x-if="qr"><div class="card mt-2" style="background:var(--bg3)">
+    <div x-html="qr.svg" style="background:#fff;display:inline-block;padding:8px;border-radius:6px"></div>
+    <div style="font-size:12px;margin-top:6px">Secret: <code x-text="qr.secret"></code></div>
+    <div class="flex mt-2"><input x-model="code" inputmode="numeric" placeholder="123456" style="width:140px"><button class="btn btn-accent" @click="confirm()">Confirm</button><button class="btn" @click="qr=null">Cancel</button></div>
+  </div></template>
+  <template x-if="codes"><div class="card mt-2" style="background:var(--bg3)"><b>Recovery codes: shown once, store offline</b>
+    <pre style="font-size:13px" x-text="codes.join('\n')"></pre>
+    <button class="btn btn-sm" @click="copyText(codes.join('\n'))">📋 Copy</button> <button class="btn btn-sm" @click="codes=null">Saved</button></div></template>
+</div>
+
 <!-- Instance Settings -->
 <div x-data="instApp()" x-init="load()" class="card">
   <div class="flex-between">
@@ -320,6 +354,16 @@
 </div>
 
 <script>
+function secApp(){return{s:{},defs:[],st:{},qr:null,code:'',codes:null,
+  async load(){try{const r=await api('GET','/api/admin/security');this.s=r.settings;this.defs=r.defs;this.st=r.status}catch(e){toast(e.message,4000,'err')}},
+  async save(){try{await api('PUT','/api/admin/security',this.s);toast(T('common.saved'),3000,'ok');this.load()}catch(e){toast(e.message,4000,'err')}},
+  async confirmNow(){if(await _stepup()){toast('OK',2000,'ok');this.load()}},
+  async enroll(){try{this.qr=await api('POST','/api/auth/totp/begin');this.code=''}catch(e){toast(e.message,4000,'err')}},
+  async confirm(){try{const r=await api('POST','/api/auth/totp/confirm',{code:this.code.trim()});this.qr=null;this.codes=r.recovery_codes;this.load()}catch(e){toast(e.message,4000,'err')}},
+  async regen(){if(!confirm('Old recovery codes stop working. Continue?'))return;try{const r=await api('POST','/api/auth/recovery/regenerate');this.codes=r.recovery_codes;this.load()}catch(e){toast(e.message,4000,'err')}},
+  async disable2fa(){if(!confirm('Disable 2FA? Login will need only the password.'))return;try{await api('POST','/api/auth/totp/disable');toast('2FA disabled',4000,'warn');this.load()}catch(e){toast(e.message,4000,'err')}},
+  async revoke(){if(!confirm('End every session and forget remembered devices (including this one)?'))return;try{await api('POST','/api/auth/sessions/revoke')}catch(e){}location.href='/login'}
+}}
 function tokensApp() {
   return {
     tokens: [],
@@ -376,7 +420,7 @@ function auditApp(){
 }
 function backupApp(){
   return{
-    doExport(){window.open('/api/admin/backup','_blank')},
+    async doExport(){try{await api('GET','/api/auth/stepup/ensure')}catch(e){return}window.open('/api/admin/backup','_blank')},
     async doImport(ev){
       const f=ev.target.files[0];if(!f)return;
       try{const d=JSON.parse(await f.text());const r=await api('POST','/api/admin/restore',d);toast('Hosts: '+r.hosts+', sets: '+r.command_sets,4000,'ok')}catch(e){toast(e.message,5000,'err')}

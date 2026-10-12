@@ -4,7 +4,7 @@
 """constants.py — Shared constants for MCP Gate."""
 
 VERSION = "0.1.6"
-DEV_BUILD = 2   # internal iteration counter; 0 = clean published release
+DEV_BUILD = 3   # internal iteration counter; 0 = clean published release
 
 def full_version():
     """Return version with dev build: '0.1.2.3' or '0.1.2' if DEV_BUILD=0."""

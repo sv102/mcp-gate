@@ -11,100 +11,109 @@
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center;align-items:center;min-height:100vh;
 {% if appearance.bg_image %}background-image:url('{{ appearance.bg_image }}');background-size:cover;background-attachment:fixed;{% endif %}}
-.login-card{background:rgba(26,29,39,0.92);backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:380px;text-align:center}
+.login-card{background:rgba(26,29,39,0.92);backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:400px;text-align:center}
 .login-logo{margin-bottom:24px}
 .login-logo img{width:85%;max-width:320px;border-radius:8px}
 .login-title{font-size:20px;font-weight:600;margin-bottom:6px}
 .login-subtitle{font-size:13px;color:var(--text2);margin-bottom:24px}
 .form-group{margin-bottom:16px;text-align:left}
 .form-group label{display:block;font-size:12px;color:var(--text2);margin-bottom:6px}
-.form-group input{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:14px;width:100%}
+.form-group input[type=password],.form-group input[type=text]{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:14px;width:100%}
 .form-group input:focus{outline:none;border-color:var(--accent)}
+.check{font-size:12px;color:var(--text2);display:flex;gap:6px;align-items:center;margin-bottom:16px}
 .login-btn{width:100%;padding:12px;background:var(--btn-primary);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:.15s}
 .login-btn:hover{opacity:.85}
 .login-btn:disabled{opacity:.5;cursor:not-allowed}
 .error-msg{background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:10px;font-size:13px;color:#f87171;margin-bottom:16px;display:none}
 .setup-hint{font-size:12px;color:var(--accent);margin-bottom:16px}
+.hidden{display:none}
+.qr{background:#fff;display:inline-block;padding:8px;border-radius:8px;margin:8px 0}
+.secret{font-family:monospace;font-size:12px;word-break:break-all;color:var(--text2);margin-bottom:12px}
+.codes{font-family:monospace;font-size:14px;text-align:left;background:var(--bg3);border-radius:8px;padding:10px;margin:8px 0;white-space:pre}
 </style>
 </head>
 <body>
 <div class="login-card">
-  <div class="login-logo">
-    <img src="/static/logo/mcp-gate_logonameW.png" alt="MCP Gate" onerror="this.style.display='none'">
-  </div>
-  
-  {% if needs_setup %}
-  <div class="login-title">{{ i18n.get('initial_setup', 'Initial Setup') }}</div>
-  <div class="login-subtitle">{{ i18n.get('set_admin_password', 'Set your admin password to get started') }}</div>
-  <div class="setup-hint">{{ i18n.get('min_8_chars', 'Minimum 8 characters') }}</div>
-  {% else %}
-  <div class="login-title">MCP Gate</div>
-  <div class="login-subtitle">{{ i18n.get('enter_password', 'Enter admin password') }}</div>
-  {% endif %}
-  
+  <div class="login-logo"><img src="/static/logo/mcp-gate_logonameW.png" alt="MCP Gate" onerror="this.style.display='none'"></div>
   <div class="error-msg" id="error"></div>
-  
-  <form id="loginForm" onsubmit="return doLogin(event)">
-    <div class="form-group">
-      <label>{{ i18n.get('password', 'Password') }}</label>
-      <input type="password" id="password" autofocus required minlength="{% if needs_setup %}8{% else %}1{% endif %}"
-             placeholder="{% if needs_setup %}{{ i18n.get('new_password', 'New password (min 8 chars)') }}{% else %}••••••••{% endif %}">
-    </div>
-    
+
+  <!-- step 1: password (+ 2FA code) -->
+  <div id="stepLogin">
     {% if needs_setup %}
-    <div class="form-group">
-      <label>{{ i18n.get('confirm_password', 'Confirm password') }}</label>
-      <input type="password" id="password2" required minlength="8"
-             placeholder="{{ i18n.get('confirm_password', 'Confirm password') }}">
-    </div>
+    <div class="login-title">{{ i18n.get('initial_setup', 'Initial Setup') }}</div>
+    <div class="login-subtitle">{{ i18n.get('set_admin_password', 'Set your admin password to get started') }}</div>
+    <div class="setup-hint">{{ i18n.get('min_8_chars', 'Minimum 8 characters') }}</div>
+    {% else %}
+    <div class="login-title">MCP Gate</div>
+    <div class="login-subtitle">{{ i18n.get('enter_password', 'Enter admin password') }}</div>
     {% endif %}
-    
-    <button type="submit" class="login-btn" id="submitBtn">
-      {% if needs_setup %}{{ i18n.get('create_password', 'Create Password') }}{% else %}{{ i18n.get('login', 'Log In') }}{% endif %}
-    </button>
-  </form>
+    <form id="loginForm" onsubmit="return doLogin(event)">
+      <div class="form-group"><label>{{ i18n.get('password', 'Password') }}</label>
+        <input type="password" id="password" autofocus required autocomplete="current-password" minlength="{% if needs_setup %}8{% else %}1{% endif %}"></div>
+      {% if needs_setup %}
+      <div class="form-group"><label>{{ i18n.get('confirm_password', 'Confirm password') }}</label>
+        <input type="password" id="password2" required minlength="8" autocomplete="new-password"></div>
+      {% endif %}
+      <div class="form-group hidden" id="codeBox"><label>2FA code / recovery code</label>
+        <input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456"></div>
+      <label class="check hidden" id="rememberBox"><input type="checkbox" id="remember"> Remember this device</label>
+      <button type="submit" class="login-btn" id="submitBtn">{% if needs_setup %}{{ i18n.get('create_password', 'Create Password') }}{% else %}{{ i18n.get('login', 'Log In') }}{% endif %}</button>
+    </form>
+  </div>
+
+  <!-- step 2: 2FA enrollment -->
+  <div id="stepEnroll" class="hidden">
+    <div class="login-title">Set up 2FA</div>
+    <div class="login-subtitle">Scan with an authenticator app (Aegis, Google Authenticator, 1Password…) and enter the 6-digit code.</div>
+    <div class="qr" id="qr"></div>
+    <div class="secret" id="secret"></div>
+    <form onsubmit="return doConfirm(event)">
+      <div class="form-group"><input type="text" id="enrollCode" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required></div>
+      <button type="submit" class="login-btn" id="confirmBtn">Confirm</button>
+    </form>
+  </div>
+
+  <!-- step 3: recovery codes -->
+  <div id="stepCodes" class="hidden">
+    <div class="login-title">Recovery codes</div>
+    <div class="login-subtitle">Each code works once if the authenticator is lost. They are shown only now — store them offline.</div>
+    <div class="codes" id="codes"></div>
+    <button class="login-btn" onclick="go()">I saved them — continue</button>
+  </div>
 </div>
 
 <script>
-async function doLogin(e) {
-  e.preventDefault();
-  const err = document.getElementById('error');
-  const btn = document.getElementById('submitBtn');
-  const pw = document.getElementById('password').value;
-  
-  {% if needs_setup %}
-  const pw2 = document.getElementById('password2').value;
-  if (pw !== pw2) {
-    err.textContent = '{{ i18n.get("passwords_dont_match", "Passwords don\\'t match") }}';
-    err.style.display = 'block';
-    return false;
-  }
-  {% endif %}
-  
-  btn.disabled = true;
-  err.style.display = 'none';
-  
-  try {
-    const resp = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: pw})
-    });
-    const data = await resp.json();
-    
-    if (resp.ok) {
-      const next = new URLSearchParams(location.search).get('next') || '/';
-      location.href = next;
-    } else {
-      err.textContent = data.error || 'Login failed';
-      err.style.display = 'block';
-    }
-  } catch(e) {
-    err.textContent = 'Connection error';
-    err.style.display = 'block';
-  }
-  btn.disabled = false;
-  return false;
+const $=id=>document.getElementById(id);
+function err(m){const e=$('error');e.textContent=m||'';e.style.display=m?'block':'none'}
+function go(){location.href=new URLSearchParams(location.search).get('next')||'/'}
+async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});let d={};try{d=await r.json()}catch(e){}return[r,d]}
+async function doLogin(e){
+  e.preventDefault();err('');
+  const pw=$('password').value;
+  {% if needs_setup %}if(pw!==$('password2').value){err('{{ i18n.get("passwords_dont_match", "Passwords don\\'t match") }}');return false}{% endif %}
+  $('submitBtn').disabled=true;
+  try{
+    const[r,d]=await post('/api/auth/login',{password:pw,code:$('code').value.trim(),remember:$('remember').checked});
+    if(r.status===202||d.need==='totp'){$('codeBox').classList.remove('hidden');$('rememberBox').classList.remove('hidden');$('code').focus();if(r.status!==202)err(d.error)}
+    else if(r.ok&&d.status==='enroll')await enroll();
+    else if(r.ok)go();
+    else err(d.error||d.detail||'Login failed');
+  }catch(x){err('Connection error')}
+  $('submitBtn').disabled=false;return false;
+}
+async function enroll(){
+  const[r,d]=await post('/api/auth/totp/begin');
+  if(!r.ok){err(d.detail||'2FA setup failed');return}
+  $('qr').innerHTML=d.svg;$('secret').textContent=d.secret;
+  $('stepLogin').classList.add('hidden');$('stepEnroll').classList.remove('hidden');$('enrollCode').focus();
+}
+async function doConfirm(e){
+  e.preventDefault();err('');$('confirmBtn').disabled=true;
+  const[r,d]=await post('/api/auth/totp/confirm',{code:$('enrollCode').value.trim()});
+  $('confirmBtn').disabled=false;
+  if(!r.ok){err(d.detail||'Invalid code');return false}
+  $('codes').textContent=d.recovery_codes.join('\n');
+  $('stepEnroll').classList.add('hidden');$('stepCodes').classList.remove('hidden');return false;
 }
 </script>
 </body>
