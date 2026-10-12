@@ -22,6 +22,7 @@ import tasks
 import routes_ui
 import routes_admin
 import routes_onboarding
+import events, routes_events  # SV_MCPGATE_020
 from models import ExecReq
 
 log = logging.getLogger("mcp-gate")
@@ -34,7 +35,8 @@ from constants import VERSION, full_version, DEV_BUILD
 @asynccontextmanager
 async def lifespan(a: FastAPI):
     storage.ensure_dirs()
-    bg = [asyncio.create_task(f()) for f in (tasks.approval_loop, tasks.trim_loop, tasks.ping_loop, tasks.ops_expiry_loop)]
+    events.init()  # SV_MCPGATE_020
+    bg = [asyncio.create_task(f()) for f in (tasks.approval_loop, tasks.trim_loop, tasks.ping_loop, tasks.ops_expiry_loop, events.loop)]
     log.info(f"mcp-gate v{VERSION} started")
     yield
     for t in bg:
@@ -53,6 +55,7 @@ _PUBLIC_PREFIXES = (
     "/oauth/", "/sse", "/messages", "/mcp",
     "/api/exec", "/api/hosts", "/api/agent-types",
     "/api/auth/", "/login", "/favicon",
+    "/metrics",  # SV_MCPGATE_020: CIDR-gated in routes_events
 )
 
 @app.middleware("http")
@@ -74,6 +77,8 @@ async def auth_middleware(request: Request, call_next):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return RedirectResponse(f"/login?next={path}", status_code=302)
 
+app.include_router(routes_events.router)
+app.middleware("http")(events.middleware)  # SV_MCPGATE_020: outermost, sees the final status
 app.include_router(routes_admin.router)
 app.include_router(routes_ui.router)
 mcp_transport.set_bcast(app_state.ws_broadcast)

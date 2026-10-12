@@ -628,5 +628,29 @@
     "import_title": "Импорт агентов",
     "import_hint": "Вставьте JSON или загрузите .json файл — один агент или массив.",
     "export_title": "Экспорт агентов"
+  },
+  "events": {
+    "title": "События → notify-gate",
+    "desc": "События безопасности и работы шлюза уходят в notify-gate (MAX / Telegram / e-mail с эскалацией). Telegram и SMTP ниже — резерв. Адрес и токен берутся из .env.",
+    "queue": "Очередь",
+    "last_ok": "последняя доставка",
+    "enabled": "Отправлять в notify-gate",
+    "legacy": "Telegram / SMTP",
+    "window": "Окно агрегации, мин",
+    "tries": "Попыток доставки",
+    "retention": "Хранить журнал, дней",
+    "event": "Событие",
+    "on": "Вкл",
+    "severity": "Важность",
+    "journal": "Журнал доставки"
+  },
+  "stats": {
+    "title": "Активность",
+    "requests": "Команд",
+    "denied": "Отклонено политикой",
+    "auth_fail": "Отказов аутентификации",
+    "by_agent": "По агентам",
+    "by_host": "По хостам",
+    "denials": "Отказы"
   }
 }

@@ -7,6 +7,7 @@ Handles hosts, command sets (allow/deny), secrets, agents, audit, config.
 """
 
 import json, os, re, time, uuid, hashlib
+import contextvars
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,8 @@ SECRETS_KEY_FILE = SSH_KEYS_DIR / "secrets.key"
 ASSETS_DIR = DATA_DIR / "assets"
 I18N_DIR = Path(os.environ.get("I18N_DIR", "/app/i18n"))
 MAX_AUDIT_ENTRIES = 10_000
+AUDIT_HOOKS: list = []  # SV_MCPGATE_020: callables(entry) after each audit write
+client_ip_var = contextvars.ContextVar("client_ip", default="")  # set per request by events.middleware
 
 # Agent key cache: {encrypted_key: agent_id} — avoids O(n) Fernet per request
 _agent_key_cache: dict[str, str] = {}
@@ -774,6 +777,8 @@ def _migrate_jsonl_to_sqlite():
 def append_audit(e: dict):
     e.setdefault("id", str(uuid.uuid4())[:8])
     e.setdefault("ts", time.time())
+    if client_ip_var.get():  # SV_MCPGATE_020
+        e.setdefault("ip", client_ip_var.get())
     with _audit_db() as db:
         db.execute(
             "INSERT OR REPLACE INTO audit (id,ts,host_id,status,source,agent_id,command,data) VALUES (?,?,?,?,?,?,?,?)",
@@ -782,6 +787,11 @@ def append_audit(e: dict):
              json.dumps(e, ensure_ascii=False))
         )
         db.commit()
+    for h in AUDIT_HOOKS:  # SV_MCPGATE_020
+        try:
+            h(e)
+        except Exception:
+            pass
 
 
 def load_audit(limit=100, host_id="", status="", source="", group="",

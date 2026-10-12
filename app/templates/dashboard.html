@@ -44,6 +44,51 @@
     </div>
   </template>
 
+  <!-- Activity (SV_MCPGATE_020) -->
+  <div class="card mb-2" x-data="statsApp()" x-init="load()">
+    <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="stats.title">Activity</h2>
+      <div class="flex" style="gap:4px"><template x-for="h in [24,168,720]" :key="h">
+        <button class="btn btn-sm" :class="hours===h?'btn-accent':''" @click="hours=h;load()" x-text="h===24?'24h':h===168?'7d':'30d'"></button></template></div></div>
+    <template x-if="d"><div>
+      <div class="grid-3 mb-2">
+        <div class="stat-card"><div class="stat-num" x-text="sum('ok')+sum('error')+sum('blocked')+sum('other')"></div><div class="stat-label" data-i18n="stats.requests">Commands</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:var(--orange)" x-text="sum('blocked')"></div><div class="stat-label" data-i18n="stats.denied">Denied by policy</div></div>
+        <div class="stat-card"><div class="stat-num text-red" x-text="authFails()"></div><div class="stat-label" data-i18n="stats.auth_fail">Auth failures</div></div>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:2px;height:90px;border-bottom:1px solid var(--border)">
+        <template x-for="p in d.series" :key="p.t">
+          <div style="flex:1;display:flex;flex-direction:column-reverse;height:100%" :title="tip(p)">
+            <div :style="seg(p.ok,'var(--green)')"></div><div :style="seg(p.blocked,'var(--orange)')"></div>
+            <div :style="seg(p.error,'var(--red)')"></div><div :style="seg(p.other+p.pending,'var(--accent2)')"></div>
+          </div>
+        </template>
+      </div>
+      <div class="flex-between text-muted" style="font-size:10px"><span x-text="lbl(d.series[0].t)"></span>
+        <span>■ <span style="color:var(--green)">ok</span> ■ <span style="color:var(--orange)">blocked</span> ■ <span style="color:var(--red)">error</span> ■ <span style="color:var(--accent2)">pending/other</span></span>
+        <span x-text="lbl(d.series[d.series.length-1].t)"></span></div>
+      <div class="grid-3 mt-2">
+        <template x-for="col in [['stats.by_agent','By agent',d.agents],['stats.by_host','By host',d.hosts]]" :key="col[0]">
+          <div><h3 style="font-size:13px;margin:4px 0" x-text="T(col[0])!==col[0]?T(col[0]):col[1]"></h3>
+            <template x-for="a in col[2]" :key="a.id"><div style="margin-bottom:6px">
+              <div class="flex-between" style="font-size:12px"><span x-text="a.id"></span>
+                <span class="text-muted" x-text="a.total+(a.blocked?' · ⛔ '+a.blocked:'')+(a.error?' · ❌ '+a.error:'')"></span></div>
+              <div style="background:var(--bg3);border-radius:3px;height:6px"><div style="display:flex;height:6px;border-radius:3px;overflow:hidden" :style="'width:'+w(a,col[2])">
+                <div :style="'flex:'+a.ok+';background:var(--green)'"></div><div :style="'flex:'+a.blocked+';background:var(--orange)'"></div>
+                <div :style="'flex:'+a.error+';background:var(--red)'"></div><div :style="'flex:'+(a.other+a.pending)+';background:var(--accent2)'"></div></div></div>
+            </div></template>
+            <span x-show="!col[2].length" class="text-muted" style="font-size:12px">—</span>
+          </div>
+        </template>
+        <div><h3 style="font-size:13px;margin:4px 0" data-i18n="stats.denials">Denials</h3>
+          <template x-for="r in authRows()" :key="r.k"><div class="flex-between" style="font-size:12px"><span x-text="r.k"></span><b class="text-red" x-text="r.v"></b></div></template>
+          <template x-for="r in d.reasons" :key="r.reason"><div class="flex-between" style="font-size:12px"><span class="text-muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80%" :title="r.reason" x-text="'⛔ '+r.reason"></span><b x-text="r.n"></b></div></template>
+          <template x-for="r in d.blocked_cmds" :key="r.host_id+r.command"><div style="font-size:11px" class="text-muted"><code x-text="r.host_id+': '+r.command" style="max-width:85%;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom"></code> ×<span x-text="r.n"></span></div></template>
+          <span x-show="!authRows().length&&!d.reasons.length" class="text-muted" style="font-size:12px">—</span>
+        </div>
+      </div>
+    </div></template>
+  </div>
+
   <!-- Agents -->
   <div class="card mb-2">
     <div class="flex-between mb-1"><h2 style="margin-top:0" data-i18n="dashboard.agents">Agents</h2><a href="/agents" class="btn btn-sm" data-i18n="dashboard.manage">Manage →</a></div>
@@ -165,6 +210,18 @@
 </div>
 {% endblock %}
 {% block scripts %}<script>
+function statsApp(){return{hours:24,d:null,_t:null,
+  async load(){try{this.d=await api('GET','/api/admin/stats?hours='+this.hours)}catch(e){}if(!this._t)this._t=setInterval(()=>this.load(),60000)},
+  sum(k){return this.d?this.d.series.reduce((s,p)=>s+p[k],0):0},
+  authRows(){const n={auth_401:'MCP 401',auth_403:'MCP 403',login_fail:'Login',oauth_401:'OAuth 401',oauth_400:'OAuth 400',oauth_404:'OAuth 404'};
+    return Object.entries(this.d?.auth||{}).filter(([k])=>!k.endsWith('_ok')).map(([k,v])=>({k:n[k]||k,v}))},
+  authFails(){return this.authRows().reduce((s,r)=>s+r.v,0)},
+  mx(){return Math.max(1,...this.d.series.map(p=>p.ok+p.blocked+p.error+p.other+p.pending))},
+  seg(v,c){return 'height:'+(v/this.mx()*100)+'%;background:'+c},
+  w(a,l){return (a.total/Math.max(1,...l.map(x=>x.total))*100)+'%'},
+  tip(p){return new Date(p.t*1000).toLocaleString()+'\nok '+p.ok+' · blocked '+p.blocked+' · error '+p.error+' · pending '+p.pending+' · other '+p.other},
+  lbl(t){const x=new Date(t*1000);return this.d.step_h===1?x.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):x.toLocaleDateString()}
+}}
 function dashApp(){
   return{
     goAudit(range){const now=new Date();const ms=range==='24h'?86400000:7*86400000;const from=new Date(now-ms);window.location.href='/audit#range='+range+'&from='+encodeURIComponent(from.toISOString().slice(0,16))},

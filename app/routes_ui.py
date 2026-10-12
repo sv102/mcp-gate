@@ -27,7 +27,7 @@ async def ui_boot(r: Request):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def ui_dash(r: Request):
     return templates.TemplateResponse("dashboard.html", {
-        "request": r, "hosts": storage.load_hosts(), "agents": storage.load_agents(),
+        "request": r, "hosts": storage.load_hosts(), "agents": [storage.public_agent(a) for a in storage.load_agents()],
         "recent": storage.load_audit(limit=10), "pending": storage.get_pending_approvals(),
         "version": full_version()})
 
@@ -40,14 +40,14 @@ async def ui_hosts(r: Request):
 @router.get("/agents", response_class=HTMLResponse)
 async def ui_agents(r: Request):
     return templates.TemplateResponse("agents.html", {
-        "request": r, "agents": storage.load_agents(),
+        "request": r, "agents": [storage.public_agent(a) for a in storage.load_agents()],
         "agent_types": storage.get_agent_types(), "version": full_version()})
 
 @router.get("/command-sets", response_class=HTMLResponse)
 async def ui_sets(r: Request):
     return templates.TemplateResponse("command_sets.html", {
         "request": r, "sets": storage.load_command_sets(), "hosts": storage.load_hosts(),
-        "agents": storage.load_agents(), "version": full_version()})
+        "agents": [storage.public_agent(a) for a in storage.load_agents()], "version": full_version()})
 
 @router.get("/console", response_class=HTMLResponse)
 async def ui_con(r: Request):

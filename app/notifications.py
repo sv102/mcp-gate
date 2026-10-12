@@ -90,32 +90,13 @@ async def send_smtp(subject, body, **overrides):
 
 
 async def notify(event_type: str, text: str) -> dict:
-    """Send notification via enabled channels, respecting per-channel cooldown."""
-    results = {}
-    cfg = load_config()
-    setting = _TYPE_MAP.get(event_type, "")
-
-    # ── Telegram ──
-    tg_cfg = cfg.get("telegram", {})
-    if tg_cfg.get("enabled", False):
-        if not setting or tg_cfg.get(setting, True):
-            cooldown = tg_cfg.get("cooldown_seconds", 300)
-            if event_type == "approval" or _check_cooldown("telegram", event_type, cooldown):  # SV_MCPGATE_V015
-                results["telegram"] = await send_telegram(text)
-            else:
-                results["telegram"] = {"skipped": "cooldown"}
-
-    # ── SMTP ──
-    smtp_cfg = cfg.get("smtp", {})
-    if smtp_cfg.get("enabled", False):
-        if not setting or smtp_cfg.get(setting, True):
-            cooldown = smtp_cfg.get("cooldown_seconds", 300)
-            if event_type == "approval" or _check_cooldown("smtp", event_type, cooldown):
-                subject = f"MCP Gate: {event_type}"
-                plain = (text.replace("<b>", "").replace("</b>", "")
-                         .replace("<code>", "").replace("</code>", ""))
-                results["smtp"] = await send_smtp(subject, plain)
-            else:
-                results["smtp"] = {"skipped": "cooldown"}
-
-    return results
+    """Legacy entry point (approval / ops / blocked): routed through events —
+    outbox → notify-gate, Telegram/SMTP as fallback or in parallel (Notifications page)."""  # SV_MCPGATE_020
+    import html as _html, re as _re
+    import events
+    lines = _html.unescape(_re.sub(r"<[^>]+>", "", text)).strip().split("\n")
+    if len(lines) > 1 and lines[0] in ("Blocked", "Pending"):
+        lines = lines[1:]
+    ev = {"approval": "approval", "ops": "grant", "blocked": "blocked", "error": "blocked"}.get(event_type, "system")
+    events.emit(ev, lines[0][:160], "\n".join(lines[1:]), agg=lines[0] if ev == "blocked" else None)
+    return {"queued": ev}

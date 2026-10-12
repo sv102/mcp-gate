@@ -5,6 +5,48 @@
 {% block content %}
 <h1 data-i18n="alerts.title">Notifications</h1>
 
+<!-- Events → notify-gate (SV_MCPGATE_020) -->
+<div x-data="evApp()" x-init="load()" class="card">
+  <div class="flex-between"><h2 style="margin-top:0" data-i18n="events.title">Events → notify-gate</h2>
+    <span class="badge" :class="!st.configured?'badge-err':(st.last_error_ts>st.last_ok?'badge-warn':'badge-ok')"
+      x-text="!st.configured?'not configured':(st.last_error_ts>st.last_ok?'delivery error':'ok')"></span></div>
+  <p class="text-muted" style="font-size:12px" data-i18n="events.desc">Security and ops events go to notify-gate (MAX / Telegram / e-mail with escalation). Telegram and SMTP below are the fallback. Endpoint and token are read from .env.</p>
+  <div class="grid-3" style="font-size:12px">
+    <div>URL: <code x-text="st.url||'—'"></code></div>
+    <div>source: <code x-text="st.source"></code> · token <b :class="st.token_set?'text-green':'text-red'" x-text="st.token_set?'✓':'✗'"></b></div>
+    <div><span data-i18n="events.queue">Queue</span>: <b x-text="st.pending"></b> · <span data-i18n="events.last_ok">last delivery</span>: <span x-text="st.last_ok?ts(st.last_ok):'—'"></span></div>
+  </div>
+  <div x-show="st.last_error" class="text-red" style="font-size:11px;margin-top:4px" x-text="(st.last_error_ts?ts(st.last_error_ts)+' · ':'')+st.last_error"></div>
+  <div class="grid-3 mt-2">
+    <div class="form-row"><label><input type="checkbox" x-model="s.enabled"> <span data-i18n="events.enabled">Send to notify-gate</span></label></div>
+    <div class="form-row"><label data-i18n="events.legacy">Telegram / SMTP</label>
+      <select x-model="s.legacy"><option value="fallback">fallback</option><option value="parallel">parallel</option><option value="off">off</option></select></div>
+    <div class="form-row"><label data-i18n="events.window">Flood window, min</label><input type="number" min="1" max="1440" x-model.number="s.window_min" style="width:110px"></div>
+    <div class="form-row"><label data-i18n="events.tries">Delivery attempts</label><input type="number" min="1" max="50" x-model.number="s.max_tries" style="width:110px"></div>
+    <div class="form-row"><label data-i18n="events.retention">Journal retention, days</label><input type="number" min="1" max="365" x-model.number="s.retention_days" style="width:110px"></div>
+  </div>
+  <table class="mt-2"><thead><tr><th data-i18n="events.event">Event</th><th data-i18n="events.on">On</th><th data-i18n="events.severity">Severity</th></tr></thead><tbody>
+    <template x-for="e in cat" :key="e.id"><tr>
+      <td><span x-text="e.title"></span> <code class="text-muted" style="font-size:10px" x-text="e.id"></code></td>
+      <td><input type="checkbox" x-model="e.on"></td>
+      <td><select x-model="e.severity_set" style="width:140px"><option value="" x-text="'default: '+e.severity"></option>
+        <template x-for="v in sevs" :key="v"><option :value="v" x-text="v"></option></template></select></td>
+    </tr></template>
+  </tbody></table>
+  <div class="flex mt-4"><button class="btn btn-accent" @click="save()">Save</button><button class="btn" @click="test()">📨 Test</button></div>
+  <h2 style="font-size:14px" class="mt-4" data-i18n="events.journal">Delivery journal</h2>
+  <table><thead><tr><th>Time</th><th>Event</th><th>Title</th><th>State</th><th>Channel</th><th>Error</th></tr></thead><tbody>
+    <template x-for="o in ob" :key="o.id"><tr>
+      <td class="text-muted" style="font-size:11px;white-space:nowrap" x-text="ts(o.ts)"></td>
+      <td><code style="font-size:11px" x-text="o.event"></code></td>
+      <td style="font-size:12px" x-text="o.title"></td>
+      <td><span class="badge" :class="{sent:'badge-ok',pending:'badge-warn',fallback:'badge-warn',failed:'badge-err'}[o.state]||''" x-text="o.state+(o.tries?' ×'+o.tries:'')"></span></td>
+      <td style="font-size:11px" x-text="o.channel||'—'"></td>
+      <td class="text-red" style="font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="o.error" x-text="o.error"></td>
+    </tr></template>
+  </tbody></table>
+</div>
+
 
 <!-- Browser Notifications -->
 <div x-data="browserNotifApp()" x-init="init()" class="card">
@@ -106,6 +148,14 @@
 </div>
 {% endblock %}
 {% block scripts %}<script>
+function evApp(){return{s:{},cat:[],st:{},sevs:[],ob:[],_t:null,
+  async load(){try{const r=await api('GET','/api/admin/events/settings');this.s=r.settings;this.cat=r.catalog;this.st=r.status;this.sevs=r.severities;this.ob=await api('GET','/api/admin/events/outbox?limit=30')}catch(e){toast(e.message,4000,'err')}
+    if(!this._t)this._t=setInterval(()=>this.refresh(),10000)},
+  async refresh(){try{const r=await api('GET','/api/admin/events/settings');this.st=r.status;this.ob=await api('GET','/api/admin/events/outbox?limit=30')}catch(e){}},
+  async save(){const overrides={};for(const e of this.cat){if(e.on!==e.on_default||e.severity_set)overrides[e.id]={on:e.on,...(e.severity_set?{severity:e.severity_set}:{})}}
+    try{await api('PUT','/api/admin/events/settings',{...this.s,overrides});toast(T('common.saved'),3000,'ok')}catch(e){toast(e.message,4000,'err')}},
+  async test(){try{await api('POST','/api/admin/events/test');toast('Queued',2000,'ok');setTimeout(()=>this.refresh(),4000)}catch(e){toast(e.message,4000,'err')}}
+}}
 function tgApp(){return{f:{enabled:false,bot_token:'',chat_id:'',notify_blocked:true,notify_errors:true,notify_approvals:true,cooldown_seconds:300},
   async load(){try{Object.assign(this.f,await api('GET','/api/admin/telegram'))}catch(e){}},
   async save(){try{await api('PUT','/api/admin/telegram',this.f);toast(T('common.saved'),3000,'ok')}catch(e){toast('Error: '+e.message,4000,'err')}},

@@ -628,5 +628,28 @@
     "import_title": "Import Agents",
     "import_hint": "Paste JSON or upload .json file — single agent or array.",
     "export_title": "Export Agents"
+  },
+  "events": {
+    "title": "Events → notify-gate",
+    "queue": "Queue",
+    "last_ok": "last delivery",
+    "enabled": "Send to notify-gate",
+    "legacy": "Telegram / SMTP",
+    "window": "Flood window, min",
+    "tries": "Delivery attempts",
+    "retention": "Journal retention, days",
+    "event": "Event",
+    "on": "On",
+    "severity": "Severity",
+    "journal": "Delivery journal"
+  },
+  "stats": {
+    "title": "Activity",
+    "requests": "Commands",
+    "denied": "Denied by policy",
+    "auth_fail": "Auth failures",
+    "by_agent": "By agent",
+    "by_host": "By host",
+    "denials": "Denials"
   }
 }
