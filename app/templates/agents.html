@@ -118,6 +118,14 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
         <div class="form-row"><label>Авто-выключение, мин <span class="text-muted" style="font-weight:normal;font-size:11px">0 = постоянно; N&gt;0 = включение даёт доступ на N мин, потом агент выключается сам (аудит + Telegram)</span></label>
           <input type="number" x-model.number="f.auto_off_min" min="0" max="1440" style="max-width:140px"></div>
 
+        <!-- SV_MCPGATE_020: static key protection -->
+        <div class="grid-2">
+          <div class="form-row"><label>Allowed IP / CIDR <span class="text-muted" style="font-weight:normal;font-size:11px">static key only; empty = any</span></label>
+            <input :value="(f.allow_ip||[]).join(', ')" @input="f.allow_ip=$event.target.value.split(',').map(s=>s.trim()).filter(Boolean)" placeholder="192.168.0.0/24, 10.0.0.5"></div>
+          <div class="form-row"><label>Key lifetime, days <span class="text-muted" style="font-weight:normal;font-size:11px">0 = no expiry; applies to the next issued key</span></label>
+            <input type="number" min="0" max="3650" x-model.number="f.key_ttl_days" style="max-width:140px"></div>
+        </div>
+
         <!-- Description -->
         <div class="form-row"><label>Description</label><textarea x-model="f.description" rows="2" placeholder="Optional description"></textarea></div>
 
@@ -195,18 +203,21 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
         </div>
         <template x-if="detail.description"><p class="text-muted mb-4" style="font-size:13px" x-text="detail.description"></p></template>
 
-        <!-- API Key -->
+        <!-- API Key (SV_MCPGATE_020: stored as HMAC, shown once) -->
         <div class="card mb-4" style="background:var(--bg3)">
           <div class="flex-between" style="margin-bottom:8px">
             <h2 style="margin:0;font-size:14px">🔑 API Key</h2>
-            <div class="flex" style="gap:4px">
-              <button class="btn btn-sm" @click="revealKey(detail.id)" x-text="revealedKey?'🙈 Hide':'👁 Show'"></button>
-              <button class="btn btn-sm btn-green" @click="genKey(detail.id)">Generate new</button>
-              <button class="btn btn-sm" x-show="revealedKey" @click="copyText(revealedKey);toast('Copied',2000,'ok')">📋</button>
-            </div>
+            <button class="btn btn-sm btn-green" @click="genKey(detail.id)">Generate new</button>
           </div>
-          <div x-show="revealedKey" style="font-family:monospace;font-size:12px;word-break:break-all;padding:6px;background:var(--bg);border-radius:4px;border:1px solid var(--border)" x-text="revealedKey"></div>
-          <div x-show="!revealedKey" class="text-muted" style="font-size:12px">Key is hidden. Click Show to reveal.</div>
+          <div style="font-size:12px" x-show="detail.has_key">
+            <code x-text="'…'+(detail.key_hint||'????')"></code>
+            · issued <span x-text="detail.key_created_at?ts(detail.key_created_at):'—'"></span>
+            · <span :class="detail.key_expires_at&&detail.key_expires_at*1000<Date.now()?'text-red':''" x-text="detail.key_expires_at?('expires '+ts(detail.key_expires_at)):'no expiry'"></span>
+            <div class="text-muted" x-text="detail.last_used?('last used '+ts(detail.last_used.ts)+' from '+detail.last_used.ip):'not used yet'"></div>
+            <div class="text-muted" x-show="(detail.allow_ip||[]).length" x-text="'allowed IP: '+(detail.allow_ip||[]).join(', ')"></div>
+          </div>
+          <div x-show="!detail.has_key" class="text-muted" style="font-size:12px">No key: generate one.</div>
+          <div class="text-muted" style="font-size:11px;margin-top:6px">Keys are stored as hashes and shown once, when issued. Lost key → generate a new one.</div>
         </div>
 
         <!-- Connection -->
@@ -244,6 +255,19 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
           <button class="btn btn-red" @click="del(detail.id)">Delete</button>
           <button class="btn" @click="detail=null;revealedKey=null">Close</button>
         </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- New key, shown once (SV_MCPGATE_020) -->
+  <template x-if="newKey">
+    <div class="overlay">
+      <div class="modal" style="position:relative;max-width:560px">
+        <h2>🔑 <span x-text="newKey.id"></span>: new API key</h2>
+        <p class="text-red" style="font-size:13px">Copy it now. It is stored as a hash and cannot be shown again.</p>
+        <div style="font-family:monospace;font-size:13px;word-break:break-all;padding:8px;background:var(--bg);border-radius:4px;border:1px solid var(--border)" x-text="newKey.key"></div>
+        <div class="flex mt-4"><button class="btn btn-accent" @click="copyText(newKey.key);toast('Copied',2000,'ok')">📋 Copy</button>
+          <button class="btn" @click="newKey=null">Saved, close</button></div>
       </div>
     </div>
   </template>
@@ -300,7 +324,7 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
 {% endblock %}
 {% block scripts %}<script>
 function agentsApp(){
-  const D={id:'',name:'',agent_type:'custom',icon:'',enabled:true,description:'',rate_limit:60,allowed_hosts:[],command_sets:[],api_key:'',auto_off_min:0};
+  const D={id:'',name:'',agent_type:'custom',icon:'',enabled:true,description:'',rate_limit:60,allowed_hosts:[],command_sets:[],api_key:'',auto_off_min:0,allow_ip:[],key_ttl_days:0};
   return{
     agents:[],types:{},sets:[],allHosts:[],
     showAdd:false,editing:false,f:JSON.parse(JSON.stringify(D)),
@@ -323,7 +347,7 @@ function agentsApp(){
       const r=new FileReader();
       r.onload=()=>{this.importJson=r.result;this.importTab='paste';this.importPreview()};
       r.readAsText(f);
-    },revealedKey:null,
+    },revealedKey:null,newKey:null,
 
     async init(){
       this.agents=await api('GET','/api/admin/agents');
@@ -366,7 +390,7 @@ function agentsApp(){
         this.f.command_sets=this.f.command_sets||[];
         const m=this.editing?'PUT':'POST';
         const u=this.editing?'/api/admin/agents/'+this.f.id:'/api/admin/agents';
-        await api(m,u,this.f);toast('Saved',3000,'ok');
+        const r=await api(m,u,this.f);toast('Saved',3000,'ok');if(r.api_key)this.newKey={id:this.f.id,key:r.api_key};
         this.showAdd=false;this.editing=false;this.reset();
         this.agents=await api('GET','/api/admin/agents');
       }catch(e){toast(e.message,5000,'err')}
@@ -377,12 +401,8 @@ function agentsApp(){
     async genKey(id){
       if(!confirm('Generate new API key? Old key will stop working.'))return;
       try{const r=await api('POST','/api/admin/agents/'+id+'/generate-key');
-        if(r.api_key){this.revealedKey=r.api_key;if(this.detail)this.detail.has_key=true;toast('Key generated! Save it now.',8000,'warn');this.agents=await api('GET','/api/admin/agents')}
+        if(r.api_key){this.newKey={id,key:r.api_key};this.agents=await api('GET','/api/admin/agents');if(this.detail)this.detail=this.agents.find(a=>a.id===id)||this.detail}
       }catch(e){toast(e.message,5000,'err')}
-    },
-    async revealKey(id){
-      if(this.revealedKey){this.revealedKey=null;return}
-      try{const r=await api('GET','/api/admin/agents/'+id+'/reveal-key');this.revealedKey=r.api_key||'(not set)'}catch(e){toast(e.message,3000,'err')}
     },
     openDetail(a){this.detail=a;this.revealedKey=null},
     generateKey(){return Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('')},

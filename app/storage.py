@@ -67,6 +67,9 @@ def ensure_dirs():
         d.mkdir(parents=True, exist_ok=True)
     os.chmod(SSH_KEYS_DIR, 0o700)
     _ensure_audit_schema()
+    n = migrate_agent_keys()  # SV_MCPGATE_020
+    if n:
+        print(f"mcp-gate: {n} agent key(s) migrated to HMAC", flush=True)
 
 
 # mtime-keyed cache for config/registry YAML. Reads compare st_mtime; writes go
@@ -421,73 +424,129 @@ def delete_agent(aid: str) -> bool:
     return True
 
 
-def encrypt_agent_key(raw: str) -> str:
-    """Encrypt agent API key with Fernet (reversible)."""
-    return _encrypt_value(raw)
+# ═══ Agent keys (SV_MCPGATE_020) ═══
+# Stored as HMAC-SHA256(pepper, key): constant-time lookup, nothing reversible on disk; a key is shown once,
+# when issued. Pepper: MCPGATE_KEY_PEPPER (.env) or data/key_pepper (generated, 0600). Static keys may be bound
+# to source IPs (allow_ip) and expire (key_ttl_days); last use is kept outside agents.yaml.
+import hmac as _hmac, ipaddress as _ipa, secrets as _secrets
+
+_KEY_FIELDS = ("encrypted_api_key", "key_hash", "key_hint", "key_created_at", "key_expires_at")
+PEPPER_FILE = DATA_DIR / "key_pepper"
+_last_use: dict[str, tuple] = {}
 
 
-def decrypt_agent_key(aid: str) -> Optional[str]:
-    """Decrypt agent API key. Returns None if not set or decrypt fails."""
-    a = get_agent(aid)
-    if not a or not a.get("encrypted_api_key"):
+def _pepper() -> bytes:
+    v = os.environ.get("MCPGATE_KEY_PEPPER", "").strip()
+    if v:
+        return v.encode()
+    if not PEPPER_FILE.exists():
+        PEPPER_FILE.write_text(_secrets.token_urlsafe(48))
+        os.chmod(PEPPER_FILE, 0o600)
+    return PEPPER_FILE.read_text().strip().encode()
+
+
+def key_hash(raw: str) -> str:
+    return _hmac.new(_pepper(), raw.encode(), hashlib.sha256).hexdigest()
+
+
+def new_agent_key() -> str:
+    return "mg_" + _secrets.token_urlsafe(32)
+
+
+def set_agent_key(a: dict, raw: str) -> dict:
+    a.pop("encrypted_api_key", None)
+    ttl = int(a.get("key_ttl_days") or 0)
+    a.update(key_hash=key_hash(raw), key_hint=raw[-4:], key_created_at=time.time(),
+             key_expires_at=time.time() + ttl * 86400 if ttl > 0 else 0)
+    return a
+
+
+def _key_owner(provided: str) -> Optional[dict]:
+    if not provided:
         return None
-    try:
-        return _decrypt_value(a["encrypted_api_key"])
-    except:
-        return None
+    h, found = key_hash(provided), None
+    for a in load_agents():                      # no early exit: time does not depend on position
+        if a.get("key_hash") and _hmac.compare_digest(a["key_hash"], h):
+            found = a
+    return found
+
+
+def agent_refusal(a: Optional[dict]) -> str:
+    """Why a static key of this agent is refused now ('' = accepted)."""
+    if not agent_active(a):
+        return "disabled or grant expired"
+    if a.get("key_expires_at") and time.time() > a["key_expires_at"]:
+        return "key expired"
+    nets, ip = a.get("allow_ip") or [], client_ip_var.get()
+    if nets:
+        try:
+            if not any(_ipa.ip_address(ip) in _ipa.ip_network(n, strict=False) for n in nets):
+                return f"IP {ip} not allowed"
+        except ValueError:
+            return f"IP {ip or '?'} not allowed"
+    return ""
 
 
 def verify_agent_key(provided_key: str) -> Optional[str]:
-    """Check provided API key against all enabled agents. Returns agent_id or None.
-    Uses cache to avoid O(n) Fernet decryptions on every request."""
-    # Check cache first
-    for enc_key, aid in list(_agent_key_cache.items()):
-        try:
-            if _decrypt_value(enc_key) == provided_key:
-                a = get_agent(aid)
-                if agent_active(a) and a.get("encrypted_api_key") == enc_key:  # SV_MCPGATE_016: rotated key must not survive in cache
-                    return aid
-                else:
-                    _agent_key_cache.pop(enc_key, None)
-        except:
-            _agent_key_cache.pop(enc_key, None)
-    # Cache miss: full scan
-    for a in load_agents():
-        if not agent_active(a):  # SV_MCPGATE_OPS
-            continue
-        enc = a.get("encrypted_api_key")
-        if not enc:
-            continue
-        try:
-            stored = _decrypt_value(enc)
-            if stored == provided_key:
-                _agent_key_cache[enc] = a["id"]
-                return a["id"]
-        except:
-            continue
+    a = _key_owner(provided_key)
+    if a and not agent_refusal(a):
+        note_key_use(a["id"])
+        return a["id"]
     return None
 
 
-def agent_id_for_key(provided_key: str) -> Optional[str]:  # SV_MCPGATE_OPS p4
-    """Agent id for a key regardless of enabled/grant (to explain a refusal)."""
-    for a in load_agents():
-        enc = a.get("encrypted_api_key")
-        try:
-            if enc and _decrypt_value(enc) == provided_key:
-                return a["id"]
-        except Exception:
-            continue
-    return None
+def agent_id_for_key(provided_key: str) -> Optional[str]:
+    """Agent id for a key regardless of state (to explain a refusal)."""
+    a = _key_owner(provided_key)
+    return a["id"] if a else None
 
 
 def invalidate_agent_key_cache():
-    """Clear agent key cache. Call after agent CRUD operations."""
-    _agent_key_cache.clear()
+    """No key cache any more (HMAC lookup is cheap); kept for callers."""
+    return None
 
 
-def public_agent(a: dict) -> dict:  # SV_MCPGATE_016: key material never leaves the server
-    d = {k: v for k, v in a.items() if k != "encrypted_api_key"}
-    d["has_key"] = bool(a.get("encrypted_api_key"))
+def note_key_use(aid: str):
+    now, ip = time.time(), client_ip_var.get()
+    p = _last_use.get(aid)
+    if p and now - p[0] < 60 and p[1] == ip:
+        return
+    _last_use[aid] = (now, ip)
+    with _audit_db() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS key_use(agent TEXT PRIMARY KEY, ts REAL, ip TEXT)")
+        db.execute("INSERT INTO key_use VALUES(?,?,?) ON CONFLICT(agent) DO UPDATE SET ts=excluded.ts, ip=excluded.ip",
+                   (aid, now, ip))
+        db.commit()
+
+
+def key_uses() -> dict:
+    try:
+        with _audit_db() as db:
+            return {r[0]: {"ts": r[1], "ip": r[2]} for r in db.execute("SELECT agent, ts, ip FROM key_use")}
+    except sqlite3.OperationalError:
+        return {}
+
+
+def migrate_agent_keys() -> int:
+    """One-time: Fernet-encrypted keys -> HMAC. Existing clients keep working."""
+    agents, n = load_agents(), 0
+    for a in agents:
+        if a.get("encrypted_api_key") and not a.get("key_hash"):
+            try:
+                raw = _decrypt_value(a["encrypted_api_key"])
+            except Exception:
+                continue
+            set_agent_key(a, raw)
+            a.update(key_created_at=a.get("updated_at") or time.time(), key_expires_at=0)
+            n += 1
+    if n:
+        save_agents(agents)
+    return n
+
+
+def public_agent(a: dict) -> dict:  # key material (even its hash) never leaves the server
+    d = {k: v for k, v in a.items() if k not in ("encrypted_api_key", "key_hash")}
+    d["has_key"] = bool(a.get("key_hash") or a.get("encrypted_api_key"))
     return d
 
 def get_agent_types() -> dict:
@@ -964,8 +1023,7 @@ def export_backup() -> dict:
     # Strip encrypted keys from agents
     agents_safe = []
     for a in load_agents():
-        a_copy = {k: v for k, v in a.items() if k != "encrypted_api_key"}
-        a_copy["has_key"] = bool(a.get("encrypted_api_key"))
+        a_copy = public_agent(a)  # SV_MCPGATE_020
         agents_safe.append(a_copy)
     return {
         "version": VERSION, "exported_at": time.time(),
@@ -990,7 +1048,7 @@ def import_backup(data: dict) -> dict:
         r["command_sets"] = len(data["command_sets"])
     if "agents" in data:
         # Strip any leaked keys on import
-        clean = [{k: v for k, v in a.items() if k != "encrypted_api_key"} for a in data["agents"]]
+        clean = [{k: v for k, v in a.items() if k not in _KEY_FIELDS} for a in data["agents"]]  # SV_MCPGATE_020
         save_agents(clean)
         r["agents"] = len(clean)
     if "config" in data and isinstance(data["config"], dict):

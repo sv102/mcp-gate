@@ -46,6 +46,17 @@ class AgentM(BaseModel):
     enabled: bool = True; description: str = ""; rate_limit: int = 60
     allowed_hosts: list[str] = []; command_sets: list[str] = []; api_key: str = ""
     auto_off_min: int = Field(0, ge=0, le=1440)  # SV_MCPGATE_OPS: >0 -> toggle ON = timed grant, auto-off
+    allow_ip: list[str] = []  # SV_MCPGATE_020: static key accepted only from these IP/CIDR (empty = any)
+    key_ttl_days: int = Field(0, ge=0, le=3650)  # 0 = issued keys never expire
+
+    @field_validator("allow_ip")
+    @classmethod
+    def _cidrs(cls, v: list[str]) -> list[str]:
+        import ipaddress
+        out = [str(x).strip() for x in v if str(x).strip()]
+        for x in out:
+            ipaddress.ip_network(x, strict=False)
+        return out
 
 
 class CmdSetM(BaseModel):

@@ -258,7 +258,8 @@ async def sandbox_clear(hid: str):
 
 @router.get("/api/admin/agents")
 async def admin_agents():
-    return [storage.public_agent(a) for a in storage.load_agents()]  # SV_MCPGATE_016
+    uses = storage.key_uses()  # SV_MCPGATE_020
+    return [storage.public_agent(a) | {"last_used": uses.get(a["id"])} for a in storage.load_agents()]
 
 
 @router.post("/api/admin/agents")
@@ -267,14 +268,13 @@ async def cr_agent(a: AgentM):
     if storage.get_agent(a.id):
         raise HTTPException(409)
     d = a.model_dump()
-    raw_key = d.pop("api_key", "")
+    raw_key = d.pop("api_key", "") or storage.new_agent_key()  # SV_MCPGATE_020: always issued, shown once
     d["created_at"] = d["updated_at"] = time.time()
-    if raw_key:
-        d["encrypted_api_key"] = storage.encrypt_agent_key(raw_key)
+    storage.set_agent_key(d, raw_key)
     storage.upsert_agent(d)
     storage.invalidate_agent_key_cache()
     storage.append_audit({"command": f"create agent: {a.id}", "source": "admin", "status": "ok", "host_id": "-"})
-    return {"status": "created", "id": a.id}
+    return {"status": "created", "id": a.id, "api_key": raw_key}
 
 
 @router.put("/api/admin/agents/{aid}")
@@ -289,10 +289,11 @@ async def up_agent(aid: str, a: AgentM):
     raw_key = d.pop("api_key", "")
     d["created_at"] = old.get("created_at", time.time()) if old else time.time()
     d["updated_at"] = time.time()
+    for k in storage._KEY_FIELDS:  # SV_MCPGATE_020: keep the current key unless a new one is given
+        if old and k in old:
+            d[k] = old[k]
     if raw_key and raw_key != "***":
-        d["encrypted_api_key"] = storage.encrypt_agent_key(raw_key)
-    elif old and old.get("encrypted_api_key"):
-        d["encrypted_api_key"] = old["encrypted_api_key"]
+        storage.set_agent_key(d, raw_key)
     storage.upsert_agent(d)
     storage.invalidate_agent_key_cache()  # SV_MCPGATE_016
     storage.append_audit({"command": f"update agent: {aid}", "source": "admin", "status": "ok", "host_id": "-"})
@@ -336,7 +337,8 @@ async def dup_agent(aid: str):
     new["id"] = f"{aid}-copy-{S.token_hex(3)}"
     new["name"] = f"{a.get('name', aid)} (copy)"
     new["enabled"] = False
-    new.pop("encrypted_api_key", None)
+    for k in storage._KEY_FIELDS:  # SV_MCPGATE_020
+        new.pop(k, None)
     new["created_at"] = new["updated_at"] = time.time()
     storage.upsert_agent(new)
     storage.append_audit({"command": f"duplicate agent: {aid}", "source": "admin", "status": "ok", "host_id": "-"})
@@ -348,8 +350,8 @@ async def gen_agent_key(aid: str):
     a = storage.get_agent(aid)
     if not a:
         raise HTTPException(404)
-    raw = S.token_urlsafe(32)
-    a["encrypted_api_key"] = storage.encrypt_agent_key(raw)
+    raw = storage.new_agent_key()  # SV_MCPGATE_020
+    storage.set_agent_key(a, raw)
     a["updated_at"] = time.time()
     storage.upsert_agent(a)
     storage.invalidate_agent_key_cache()  # SV_MCPGATE_016
@@ -359,21 +361,13 @@ async def gen_agent_key(aid: str):
 
 @router.get("/api/admin/agents/{aid}/reveal-key")
 async def reveal_agent_key(aid: str):
-    """Reveal current API key (Fernet-decrypted)."""
-    key = storage.decrypt_agent_key(aid)
-    if key is None:
-        return {"ok": False, "message": "No key set or decrypt failed"}
-    storage.append_audit({"command": f"reveal key: {aid}", "source": "admin", "status": "ok", "host_id": "-"})  # SV_MCPGATE_016
-    return {"ok": True, "api_key": key}
+    """Keys are stored as HMAC hashes: they cannot be shown again."""  # SV_MCPGATE_020
+    raise HTTPException(410, "Agent keys are stored as hashes and shown only once: generate a new key")
 
 
 @router.get("/api/admin/agents/export")
 async def exp_agents():
-    return [
-        {k: v for k, v in a.items() if k != "encrypted_api_key"}
-        | {"has_key": bool(a.get("encrypted_api_key"))}
-        for a in storage.load_agents()
-    ]
+    return [storage.public_agent(a) for a in storage.load_agents()]  # SV_MCPGATE_020
 
 
 @router.post("/api/admin/agents/import")
@@ -387,7 +381,9 @@ async def imp_agents(req: Request):
         it.setdefault("name", it["id"])
         it.setdefault("agent_type", "custom")
         it["created_at"] = it["updated_at"] = time.time()
-        it.pop("encrypted_api_key", None)
+        app_state.validate_id(str(it["id"]), "agent")  # SV_MCPGATE_020
+        for k in storage._KEY_FIELDS:
+            it.pop(k, None)
         storage.upsert_agent(it)
         imported.append(it["id"])
     if imported:

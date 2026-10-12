@@ -108,7 +108,7 @@ def _require_mcp_auth(request: Request) -> dict:
     off = storage.agent_id_for_key(token)  # SV_MCPGATE_OPS p4
     if off:
         log.warning(f"MCP request blocked: agent '{off}' is disabled or its grant expired")
-        raise HTTPException(403, f"Agent '{off}' is disabled or its grant expired")
+        raise HTTPException(403, f"Agent '{off}': {storage.agent_refusal(storage.get_agent(off)) or 'refused'}")
     entry = access_tokens.get(_th(token))
     if not entry or entry.get("expires", 0) < time.time():
         access_tokens.pop(_th(token), None)

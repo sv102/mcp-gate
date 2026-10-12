@@ -105,7 +105,10 @@ def validate_api_key(key: str) -> Optional[str]:
     Checks global key (bcrypt) then per-agent keys (Fernet)."""
     if not key:
         return None
+    aid = storage.verify_agent_key(key)  # SV_MCPGATE_020: cheap HMAC lookup first, bcrypt only as fallback
+    if aid:
+        return aid
     h = storage.load_config().get("mcp_api_key_hash", "")
     if h and bcrypt.checkpw(key.encode(), h.encode()):
         return "__global__"
-    return storage.verify_agent_key(key)
+    return None
