@@ -10,5 +10,7 @@ ARG PIP_TRUSTED_HOST
 RUN pip install --no-cache-dir -r requirements.txt
 ARG CACHE_BUST=1774945138
 COPY app/ .
+RUN useradd -r -u 10001 -M -d /nonexistent -s /usr/sbin/nologin mcpgate && chmod -R a+rX /app
+USER 10001
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

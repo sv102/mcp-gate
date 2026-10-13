@@ -40,6 +40,8 @@ SETTINGS = {
     "lockout_minutes": (15, 1, 1440, "Lockout duration, min", "Блокировка, мин"),
     "stepup_minutes": (10, 1, 120, "Identity confirmation valid, min", "Подтверждение личности действует, мин"),
     "stepup_https_only": (False, None, None, "Sensitive actions only over HTTPS", "Чувствительные действия только по HTTPS"),
+    "allow_global_key": (False, None, None, "Accept the legacy global API key (no agent restrictions)",
+                         "Принимать устаревший глобальный API-ключ (без ограничений агента)"),
 }
 
 

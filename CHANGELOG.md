@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-10-13
+
+### Security
+- The legacy global API key (bcrypt `mcp_api_key_hash`, requests run as agent `__global__` without host /
+  command-set restrictions, grants or IP binding) is **refused by default**. Create a dedicated agent instead.
+  **Upgrade:** if a client still uses it, switch on Settings → Security → "Accept the legacy global API key"
+  (identity confirmation required; the change is reported as a security event).
+
+## [0.2.1] — 2026-10-13
+
+### Changed
+- The container runs as an unprivileged user (uid 10001) instead of root.
+  **Upgrade:** `chown -R 10001:10001 ./data` before starting the new image.
+- Bind address of the published port is configurable: `MCPGATE_BIND` in `.env` (default `0.0.0.0`; a LAN IP or
+  `127.0.0.1` keeps the UI and API off other interfaces).
+
 ## [0.2.0] — 2026-10-13
 
 ### Added

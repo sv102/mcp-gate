@@ -9,7 +9,7 @@ services:
     container_name: mcp-gate
     restart: unless-stopped
     ports:
-      - "8090:8000"
+      - "${MCPGATE_BIND:-0.0.0.0}:8090:8000"  # MCPGATE_BIND in .env: LAN IP or 127.0.0.1
     volumes:
       - ./data:/data
     env_file:

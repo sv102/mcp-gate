@@ -109,6 +109,7 @@ def validate_api_key(key: str) -> Optional[str]:
     if aid:
         return aid
     h = storage.load_config().get("mcp_api_key_hash", "")
-    if h and bcrypt.checkpw(key.encode(), h.encode()):
+    import auth  # SV_MCPGATE_022: legacy global key off unless explicitly allowed
+    if h and auth.setting("allow_global_key") and bcrypt.checkpw(key.encode(), h.encode()):
         return "__global__"
     return None
