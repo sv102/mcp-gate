@@ -121,7 +121,7 @@ input:checked+.toggle-slider:before{transform:translateX(16px)}
         <!-- SV_MCPGATE_020: static key protection -->
         <div class="grid-2">
           <div class="form-row"><label>Allowed IP / CIDR <span class="text-muted" style="font-weight:normal;font-size:11px">static key only; empty = any</span></label>
-            <input :value="(f.allow_ip||[]).join(', ')" @input="f.allow_ip=$event.target.value.split(',').map(s=>s.trim()).filter(Boolean)" placeholder="192.168.0.0/24, 10.0.0.5"></div>
+            <input :value="(f.allow_ip||[]).join(', ')" @input="f.allow_ip=$event.target.value.split(',').map(s=>s.trim()).filter(Boolean)" placeholder="10.0.0.0/8, 203.0.113.7"></div>
           <div class="form-row"><label>Key lifetime, days <span class="text-muted" style="font-weight:normal;font-size:11px">0 = no expiry; applies to the next issued key</span></label>
             <input type="number" min="0" max="3650" x-model.number="f.key_ttl_days" style="max-width:140px"></div>
         </div>
