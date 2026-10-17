@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-10-17
+
+### Changed
+- **Documentation for 0.2.** README rewritten (what's new, upgrade notes, request lifecycle diagram, new settings);
+  `docs/guide.md` now covers 2FA, identity confirmation, Settings → Security, emergency commands, timed agents,
+  key restrictions, events, the activity dashboard and Prometheus.
+- **New screenshots (EN/RU)** taken on a demo instance with fictitious data; duplicate copies removed.
+- The screenshot capture scripts are no longer part of the repository.
+- `SECURITY.md`: supported versions are 0.2.x.
+
 ## [0.2.2] — 2026-10-13
 
 ### Security

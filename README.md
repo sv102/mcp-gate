@@ -504,7 +504,7 @@ GET /api/hosts
 ### Health Check
 
 ```http
-GET /health → {"status": "ok", "version": "0.2.2", "hosts": 3, "agents": 2}
+GET /health → {"status": "ok", "version": "0.2.3", "hosts": 3, "agents": 2}
 ```
 
 ### MCP Protocol

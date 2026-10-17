@@ -12,3 +12,6 @@ compose.override.yaml
 DEVLOG.md
 _old_backup/
 _backup/
+
+# local dev tools (screenshot capture), not published
+/scripts/

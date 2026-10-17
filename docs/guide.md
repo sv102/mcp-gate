@@ -7,6 +7,7 @@ This guide covers everything beyond the [Quick Start](../README.md#quick-start).
 ## Table of Contents
 
 - [Authentication](#authentication)
+- [Security: 2FA and identity confirmation](#security-2fa-and-identity-confirmation)
 - [Command Sets](#command-sets)
 - [Parameterized Commands](#parameterized-commands)
 - [Approval Modes](#approval-modes)
@@ -14,6 +15,7 @@ This guide covers everything beyond the [Quick Start](../README.md#quick-start).
 - [Agents](#agents)
 - [Host Setup](#host-setup)
 - [Notifications](#notifications)
+- [Events and Activity](#events-and-activity)
 - [Import / Export](#import--export)
 - [Appearance](#appearance)
 - [Reverse Proxy Examples](#reverse-proxy-examples)
@@ -28,14 +30,18 @@ MCP Gate has three authentication modes for the admin UI. Configure in **Setting
 
 ### `basic` (default)
 
-Built-in login with bcrypt-hashed password and HMAC-signed session cookie (7-day expiry).
+Built-in login with an argon2id-hashed password and a signed session cookie (`SameSite=Strict`) that ends after an idle timeout and an absolute lifetime (both configurable, see [Security](#security-2fa-and-identity-confirmation)). Two-factor authentication (TOTP) is **on by default** and can be switched off.
 
-On first launch, you'll be prompted to set the admin password. To reset it later, edit `data/config.yaml` and remove the `admin_password_hash` field — the next visit will trigger the setup wizard again.
+On first launch you set the admin password and then enroll an authenticator app (2FA). To set a new password from the host:
+
+```bash
+docker exec -it mcp-gate python cli.py password
+```
 
 API endpoints for auth management:
 
 ```
-POST /api/auth/login          {"password": "..."}
+POST /api/auth/login          {"password": "...", "code": "123456"}   # code only when 2FA is on
 POST /api/auth/logout
 GET  /api/auth/status         → {"authenticated": true, "user": "admin"}
 POST /api/auth/change-password {"old_password": "...", "new_password": "..."}
@@ -58,6 +64,61 @@ No authentication. Use only when MCP Gate is behind a VPN or on an isolated netw
 ### What auth mode does NOT affect
 
 MCP transport (Claude.ai, Cursor, etc.) and agent API (`/api/exec`) use their own authentication — OAuth 2.0 and API keys respectively. Changing the UI auth mode does not affect agent connectivity.
+
+---
+
+## Security: 2FA and identity confirmation
+
+### Two-factor authentication (TOTP)
+
+- After the first login you scan a QR code with any authenticator app and confirm with a code.
+- **10 one-time recovery codes** are shown once: store them somewhere safe.
+- "Remember this device" skips the code on that browser for a number of days (Settings → Security).
+- To switch 2FA off, use **Settings → Security** (identity confirmation required).
+
+### Identity confirmation (step-up)
+
+Sensitive actions ask for your password and a 2FA code, then stay unlocked for a few minutes: creating agents and issuing keys,
+secrets, backup/restore, the admin console, SSH keys, notification channels, security settings and viewing the MCP token.
+The UI asks and retries the action automatically.
+
+### Settings → Security
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| Require 2FA | on | Admin login needs a TOTP code |
+| Session idle timeout | 60 min | Session ends without activity |
+| Session max lifetime | 12 h | Hard limit regardless of activity |
+| Remember device | 14 days | `0` = off |
+| Failed attempts before lockout | 5 | Per IP |
+| Lockout duration | 15 min | |
+| Identity confirmation valid | 10 min | |
+| Sensitive actions only over HTTPS | off | |
+| Accept the legacy global API key | off | Keys without agent restrictions; create a dedicated agent instead |
+
+**End all sessions** revokes every session and remembered device at once.
+
+### Emergency commands
+
+Shell access to the container is root on the gate anyway, so recovery is done there:
+
+```bash
+docker exec -it mcp-gate python cli.py totp-reset        # disable 2FA, end all sessions
+docker exec -it mcp-gate python cli.py password          # set a new admin password
+docker exec -it mcp-gate python cli.py revoke-sessions   # end all sessions and remembered devices
+```
+
+### Keys at rest
+
+Put these in `.env` and **keep `.env` in your backups**:
+
+| Variable | Used for |
+|----------|----------|
+| `MCPGATE_MASTER_KEY` | Encrypts the secrets vault |
+| `MCPGATE_KEY_PEPPER` | Agent key hashing (HMAC). Without the variable a pepper is generated in `data/key_pepper` |
+| `MCPGATE_SESSION_KEY` | Signs admin sessions |
+
+Generate each with `openssl rand -base64 48`.
 
 ---
 
@@ -210,8 +271,13 @@ The type affects the icon in the UI but not the functionality — all agents use
 | **Command Sets** | Which command sets this agent can use (allow/deny). Combined with host sets via the authorization formula |
 | **Allowed Hosts** | Restrict agent to specific hosts (empty = all enabled hosts) |
 | **Rate Limit** | Max requests per minute for this agent |
-| **API Key** | Fernet-encrypted, shown once on creation. Used for `/api/exec` calls |
+| **API Key** | Stored only as an HMAC-SHA256 hash, **shown once** when issued. Used for `/api/exec` calls |
+| **Allowed IP / CIDR** | The key is accepted only from these addresses (empty = any) |
+| **Key lifetime (days)** | `0` = never expires; an expired key is refused with the reason |
+| **Auto-off (minutes)** | `0` = normal toggle. `> 0` = timed (just-in-time) grant: switching the agent on opens it for N minutes, then it switches itself off |
 | **Enabled** | Toggle agent on/off without deleting |
+
+The agent card shows when and from which IP the key was last used. A refused key gets a clear reason: disabled, grant expired, key expired or IP not allowed. Lost a key? Issue a new one: it cannot be shown again.
 
 ### MCP connector agents
 
@@ -262,7 +328,7 @@ Use the **SSH Test** button on the host page to verify connectivity before runni
 
 ## Notifications
 
-MCP Gate can send alerts via Telegram and/or email.
+MCP Gate sends alerts through notify-gate (recommended), Telegram and/or email.
 
 ### Telegram
 
@@ -282,7 +348,47 @@ Configure in **Settings → Notifications**:
 - Commands pending approval (optimistic/pessimistic/strict modes)
 - Commands auto-approved or auto-rejected on timeout
 - Blocked commands (whitelist violations)
-- System events (optional)
+- Security and operations events (see [Events and Activity](#events-and-activity))
+
+---
+
+## Events and Activity
+
+### Events
+
+Logins and failures, agent / host / command set / secret changes, key issue, SSH keys, console commands, exports, approvals,
+timed grants, blocked commands, refused agent keys and OAuth are classified in one place and delivered through a **durable outbox
+with retries**. A flood of similar events is aggregated into one message. Per-event on/off and severity, and a delivery journal,
+are on the **Notifications** page.
+
+Delivery to notify-gate (JSON source) is configured in `.env`:
+
+```bash
+NOTIFY_GATE_URL=http://notify-gate:8010
+NOTIFY_GATE_SOURCE=mcp-gate
+NOTIFY_GATE_TOKEN=<source token>
+```
+
+Telegram and SMTP from the UI work as a fallback or in parallel.
+
+### Activity dashboard
+
+The Dashboard shows commands per hour (ok / blocked / error / pending) for 24 hours, 7 days or 30 days, split per agent and per host,
+with authentication failures and the top block reasons. The counters survive audit trimming.
+
+### Prometheus
+
+`GET /metrics` is served on the same port and is limited by `METRICS_CIDRS` (default `127.0.0.1/32`):
+
+```yaml
+scrape_configs:
+  - job_name: mcp-gate
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mcp-gate:8000"]
+```
+
+Behind a reverse proxy set `TRUSTED_PROXIES`, so the real client IP appears in audit entries and events.
 
 ---
 
