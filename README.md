@@ -22,6 +22,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/sv102/mcp-gate/pkgs/container/mcp-gate"><img src="https://img.shields.io/badge/ghcr.io-sv102%2Fmcp--gate-2496ED?logo=docker&logoColor=white" alt="GHCR"></a>
+  <img src="https://img.shields.io/badge/admin%202FA-TOTP-success.svg" alt="2FA">
+  <img src="https://img.shields.io/badge/container-non--root-success.svg" alt="non-root">
+  <img src="https://img.shields.io/badge/metrics-Prometheus-E6522C.svg?logo=prometheus&logoColor=white" alt="Prometheus">
+  <a href="https://github.com/sv102/mcp-gate/actions"><img src="https://img.shields.io/github/actions/workflow/status/sv102/mcp-gate/docker-publish.yml?label=image%20build" alt="Build"></a>
+  <a href="https://github.com/sv102/mcp-gate/stargazers"><img src="https://img.shields.io/github/stars/sv102/mcp-gate?style=flat" alt="Stars"></a>
+  <img src="https://img.shields.io/github/last-commit/sv102/mcp-gate" alt="Last commit">
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#features">Features</a> ·
   <a href="#screenshots">Screenshots</a> ·
@@ -56,6 +66,24 @@ LLM Agent ──MCP Protocol──▶ MCP Gate ──SSH──▶ Your Servers
 
 ---
 
+## ✨ What's new in 0.2
+
+> 🔐 **Hardened admin plane** · 🔔 **Real-time security events** · 📈 **Observability** · ⏱ **Just-in-time agents**
+
+| | What you get |
+|---|---|
+| 🔐 **Admin 2FA (TOTP)** | QR enrollment wizard, 10 one-time recovery codes, "remember this device", emergency reset with `cli.py`. Can be switched off in Settings → Security. |
+| 🛡 **Identity confirmation (step-up)** | Password + 2FA code before sensitive actions: creating agents and keys, secrets, backup/restore, admin console, SSH keys, notification channels, security settings. The UI asks and retries automatically. |
+| 🗝 **Keys you cannot read back** | Agent keys are stored as HMAC-SHA256 with a server pepper and shown **once**. Per-agent allowed IP/CIDR, key lifetime, last use (time and IP). |
+| ⏱ **Timed (just-in-time) agents** | `auto_off_min` opens a grant for N minutes; the agent switches itself off when it expires. |
+| 🔔 **Events → your channel** | Logins, agent/host/secret changes, key issue, blocked commands, approvals, OAuth… delivered through a durable outbox with retries to a notify-gate JSON source, Telegram or SMTP. Flood aggregation, per-event severity, delivery journal. |
+| 📈 **Activity dashboard + `/metrics`** | Hourly ok / blocked / error / pending for 24 h, 7 d, 30 d; per agent and per host; top block reasons. Prometheus endpoint restricted by `METRICS_CIDRS`. |
+| 🧱 **Safer defaults** | Container runs as an unprivileged user (uid 10001), bind address via `MCPGATE_BIND`, legacy global API key refused by default, argon2id passwords, signed sessions with idle/absolute timeouts, `SameSite=Strict` and `Origin` checks. |
+
+Upgrading from 0.1.x? See [Updating](#updating).
+
+---
+
 ## Features
 
 | Category | Features |
@@ -63,7 +91,9 @@ LLM Agent ──MCP Protocol──▶ MCP Gate ──SSH──▶ Your Servers
 | **Security** | Whitelist-only execution · Dual-layer filtering `(host_allow ∩ agent_allow) - (host_deny ∪ agent_deny)` · Fernet-encrypted secrets vault · `$SECRET{id}` substitution with output scrubbing · Parameterized commands with regex validation · Managed known_hosts (TOFU + MITM protection) · Rate limiting |
 | **Approval** | Four modes: `auto`, `pessimistic`, `optimistic`, `strict` · Real-time WebSocket notifications · Browser push notifications · Telegram and SMTP alerts |
 | **MCP Protocol** | Streamable HTTP + SSE transport · OAuth 2.0 with DCR and PKCE S256 · Per-agent Bearer tokens (90-day) · Claude.ai, Cursor, Windsurf, Continue, Cline connect natively |
-| **Authentication** | Three modes: `basic` (bcrypt + signed cookie), `proxy` (Authentik/Keycloak/Authelia), `none` (homelab behind VPN) |
+| **Authentication** | Three modes: `basic` (argon2id password, optional **TOTP 2FA**, signed httpOnly session with idle/absolute timeouts), `proxy` (Authentik/Keycloak/Authelia), `none` (homelab behind VPN) · Step-up confirmation for sensitive actions · Lockout by IP |
+| **Agent keys** | HMAC-SHA256 with server pepper, shown once · Allowed IP/CIDR · Key lifetime · Timed (JIT) grants · Clear 403 reason (disabled / grant expired / key expired / IP not allowed) |
+| **Events & Observability** | Security/ops events to notify-gate, Telegram or SMTP via a durable outbox · Activity dashboard · Prometheus `/metrics` · SQLite audit log with client IP |
 | **Agents** | Support for Claude, ChatGPT, Gemini, Cursor, Windsurf, Continue, Cline, Open WebUI, Custom · Per-agent command sets, rate limits, allowed hosts · Enable/disable toggle with instant MCP access revocation |
 | **Management** | Command Sets (Allow/Deny) · Host Setup Instructions (auto-generated bash scripts) · Import/Export (JSON paste or file upload) · SSH key lifecycle management · Dashboard with live metrics |
 | **UI** | Dark glassmorphism theme · 6 built-in color schemes · Custom backgrounds · i18n (English, Russian, Chinese) · Responsive layout |
@@ -256,11 +286,11 @@ All data is stored in human-readable YAML/JSON files:
 |------|---------|
 | `data/config.yaml` | Instance configuration, auth settings, appearance |
 | `data/hosts.yaml` | SSH host definitions and their command sets |
-| `data/agents.yaml` | Agent definitions, permissions, and API keys |
+| `data/agents.yaml` | Agent definitions and permissions (keys are stored only as HMAC hashes) |
 | `data/command_sets.yaml` | Reusable command groups (Allow/Deny) |
 | `data/secrets.yaml` | Fernet-encrypted secrets for `$SECRET{id}` |
-| `data/audit.jsonl` | Append-only audit log |
-| `data/ssh_keys/` | Ed25519 key pair, known_hosts, Fernet key |
+| `data/audit.db` | SQLite audit log (WAL, indexed); `events.db` is the durable notification outbox |
+| `data/ssh_keys/` | Ed25519 key pair and known_hosts (the master key lives in `MCPGATE_MASTER_KEY`) |
 
 ---
 
@@ -273,12 +303,21 @@ All data is stored in human-readable YAML/JSON files:
 | `MCP_TOKEN` | Yes | — | Token for MCP client authentication (OAuth approval page) |
 | `MCP_BASE_URL` | Yes* | — | Public URL for OAuth/MCP (*required for external MCP clients) |
 | `DATA_DIR` | No | `/data` | Path to persistent data directory |
+| `MCPGATE_BIND` | No | `0.0.0.0` | Bind address of the published port (use your LAN IP or `127.0.0.1` to keep the UI off other interfaces) |
+| `MCPGATE_KEY_PEPPER` | Recommended | — | Pepper for agent key HMAC. **Losing it means re-issuing all agent keys** |
+| `MCPGATE_MASTER_KEY` | Recommended | — | Encrypts the secrets vault. **Keep it in your backups** |
+| `MCPGATE_SESSION_KEY` | Recommended | — | Signs admin sessions |
+| `TRUSTED_PROXIES` | No | — | Reverse proxies whose `X-Forwarded-For` is trusted (client IP in audit and events) |
+| `METRICS_CIDRS` | No | `127.0.0.1/32` | Who may scrape `/metrics` |
+| `NOTIFY_GATE_URL` / `NOTIFY_GATE_SOURCE` / `NOTIFY_GATE_TOKEN` | No | — | Deliver events to a notify-gate JSON source (Telegram/SMTP from the UI are the fallback) |
+
+Generate each key with `openssl rand -base64 48`.
 
 ### Authentication Modes
 
 | Mode | Use case | How it works |
 |------|----------|--------------|
-| `basic` | Default | Built-in login page, bcrypt password, HMAC-signed httpOnly cookie (7 days) |
+| `basic` | Default | Built-in login page, argon2id password, optional TOTP 2FA, signed httpOnly cookie with idle and absolute timeouts |
 | `proxy` | Enterprise SSO | Trusts `X-Forwarded-User` / `X-Forwarded-Email` from reverse proxy (Authentik, Keycloak, Authelia) |
 | `none` | Homelab behind VPN | No auth — the network is the trust boundary |
 
@@ -372,6 +411,18 @@ docker compose up -d
 
 Your data in `./data/` is preserved across updates.
 
+### Upgrading to 0.2.x
+
+```bash
+chown -R 10001:10001 ./data   # the container now runs as an unprivileged user
+```
+
+- All admin sessions end after the upgrade; the first login starts the 2FA enrollment wizard.
+- Add `MCPGATE_KEY_PEPPER`, `MCPGATE_MASTER_KEY`, `MCPGATE_SESSION_KEY` to `.env` and **back up `.env`**: without them agent keys cannot be verified and secrets cannot be decrypted.
+- Existing agent keys keep working (migrated to HMAC on start); keys are no longer revealable.
+- A client still using the legacy global API key is refused by default; create a dedicated agent, or (temporarily) enable Settings → Security → "Accept the legacy global API key".
+- New port binding: set `MCPGATE_BIND` if you want to keep the UI off other interfaces.
+
 ---
 
 ## Security Model
@@ -395,6 +446,32 @@ LLM Agent → request "sudo zpool status"
 **Secrets** are resolved server-side (`$SECRET{id}` → actual value) and scrubbed from all outputs and logs. The LLM never sees the secret value.
 
 **SSH keys** are Ed25519, generated on first boot. Known hosts are managed with Trust-On-First-Use (TOFU) policy and reject-on-key-change (MITM protection).
+
+### Request lifecycle
+
+```mermaid
+flowchart LR
+  A["🤖 AI agent"] -->|"MCP or API key"| B{"Agent auth"}
+  B -->|"disabled / expired / IP not allowed"| X["403 + reason"]
+  B --> C{"Whitelist: allow AND NOT deny"}
+  C -->|"not listed"| Y["🚫 blocked, audited"]
+  C --> D{"Approval mode"}
+  D -->|"needs a human"| E["👤 operator decides"]
+  D --> F["🔐 secrets resolved server-side"]
+  E --> F
+  F --> G["SSH to host, sudoers is layer 3"]
+  G --> H["scrub output"]
+  H --> I["📋 audit + 🔔 events"]
+```
+
+### Admin plane hardening
+
+- **2FA and step-up** for the UI; the OAuth consent page also asks for the 2FA code and locks out repeated failures.
+- **Sessions** are signed, expire on idle and absolute timeouts, can be revoked all at once; state-changing requests must carry a matching `Origin`.
+- **Agent keys** are never stored in a readable form and never sent to the browser.
+- **Live audit stream** (`/ws/audit`) requires an admin session.
+- **Everything sensitive is reported** as an event (logins, key issue, secret changes, exports, console commands…).
+- **Least privilege at runtime**: unprivileged container, port bound to the interface you choose, `/metrics` limited to `METRICS_CIDRS`.
 
 ---
 
@@ -427,7 +504,7 @@ GET /api/hosts
 ### Health Check
 
 ```http
-GET /health → {"status": "ok", "version": "0.1.2", "hosts": 3, "agents": 2}
+GET /health → {"status": "ok", "version": "0.2.2", "hosts": 3, "agents": 2}
 ```
 
 ### MCP Protocol
@@ -443,6 +520,9 @@ MCP tools: `exec_command`, `list_hosts`, `server_health`
 
 ## Roadmap
 
+- [x] Admin 2FA, step-up confirmation, hardened sessions
+- [x] Timed (just-in-time) agents
+- [x] Event notifications and Prometheus metrics
 - [ ] Multi-user RBAC
 - [ ] HTTP Service Proxy (forward requests to internal services)
 - [ ] Scheduled/cron commands

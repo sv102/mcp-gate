@@ -142,7 +142,7 @@ if ! $NON_INTERACTIVE; then
     echo -e "  No local Playwright found."
     echo ""
     echo -e "  ${W}Where is your Playwright container running?${N}"
-    echo -e "  Enter SSH address (e.g. ${C}root@192.168.0.102${N})"
+    echo -e "  Enter SSH address (e.g. ${C}root@192.168.1.10${N})"
     echo -e "  or press Enter to try ${C}localhost${N}"
     echo ""
     read -p "  Playwright host [localhost]: " pw_input
@@ -161,7 +161,7 @@ if ! $NON_INTERACTIVE; then
   # ── URL ──
   echo -e "${D}─── MCP Gate URL ──────────────────────────────${N}"
   echo -e "  Current: ${W}${URL}${N}"
-  echo -e "  ${D}(include http:// — e.g. http://192.168.0.103:8090)${N}"
+  echo -e "  ${D}(include http:// — e.g. http://192.168.1.10:8090)${N}"
   read -p "  New URL (Enter = keep): " input_url
   URL="${input_url:-$URL}"
   echo ""

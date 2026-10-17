@@ -20,7 +20,7 @@
 //   --help      Show help
 //
 // Examples:
-//   node screenshots.js --url http://192.168.0.103:8090
+//   node screenshots.js --url http://192.168.1.10:8090
 //   node screenshots.js --width 1920 --height 1080 --full-page
 //   MCPGATE_PASSWORD=xxx node screenshots.js --url http://host:8000
 //
